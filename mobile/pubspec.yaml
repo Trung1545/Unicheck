@@ -1,0 +1,25 @@
+name: unicheck_mobile
+description: "UniCheck - Smart Biometric Facial Recognition Attendance Mobile App"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  get: ^4.6.6
+  dio: ^5.7.0
+  flutter_secure_storage: ^9.2.2
+  camera: ^0.11.0+2
+  intl: ^0.19.0
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

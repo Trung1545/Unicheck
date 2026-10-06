@@ -1,0 +1,99 @@
+services:
+  # ==============================================================================
+  # 1. DATABASE: PostgreSQL 15
+  # ==============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: unicheck_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-unicheck_db}
+      POSTGRES_USER: ${DB_USER:-unicheck_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-unicheck_secret_password}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-unicheck_user} -d ${DB_NAME:-unicheck_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - unicheck_network
+
+  # ==============================================================================
+  # 2. CACHE & IN-MEMORY STORE: Redis 7
+  # ==============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: unicheck_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - unicheck_network
+
+  # ==============================================================================
+  # 3. BACKEND API: Java Spring Boot 3
+  # ==============================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: unicheck_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-unicheck_db}
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-unicheck_user}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-unicheck_secret_password}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SERVER_PORT: ${BACKEND_PORT:-8080}
+      SECURITY_JWT_SECRET: ${JWT_SECRET:-4c9a58b29f7e1b3d5c7a9e0f2b4d6e8a0c2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d}
+      SECURITY_JWT_EXPIRATION: ${JWT_EXPIRATION_MS:-86400000}
+      AI_SERVICE_URL: http://ai-service:5000
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    networks:
+      - unicheck_network
+
+  # ==============================================================================
+  # 4. AI SERVICE: Python Flask (OpenCV, Face Embedding, Liveness)
+  # ==============================================================================
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: unicheck_ai_service
+    restart: unless-stopped
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "${AI_SERVICE_PORT:-5000}:5000"
+    networks:
+      - unicheck_network
+
+volumes:
+  postgres_data:
+    name: unicheck_postgres_data
+  redis_data:
+    name: unicheck_redis_data
+
+networks:
+  unicheck_network:
+    name: unicheck_network
+    driver: bridge

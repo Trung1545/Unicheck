@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: unicheck-backend-test
+
+  datasource:
+    url: jdbc:h2:mem:unicheck_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+server:
+  port: 0
+
+security:
+  jwt:
+    secret: 4c9a58b29f7e1b3d5c7a9e0f2b4d6e8a0c2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d
+    expiration-ms: 3600000
+    refresh-expiration-ms: 86400000
+
+ai-service:
+  url: http://localhost:5000
