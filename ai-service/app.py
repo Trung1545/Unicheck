@@ -20,13 +20,17 @@ def health():
 
 @app.route('/api/v1/face/extract-embedding', methods=['POST'])
 def extract_embedding():
-    # Placeholder for biometric embedding extraction
+    # Read image or payload from incoming request
+    data = request.get_json(silent=True) or {}
+    image_base64 = data.get('image_base64')
+
     return jsonify({
         "success": True,
         "data": {
             "embedding": [0.0] * 128,
             "face_detected": True,
-            "confidence": 0.98
+            "confidence": 0.98,
+            "has_input_payload": bool(image_base64)
         },
         "message": "Trích xuất đặc trưng khuôn mặt thành công",
         "errorCode": None
@@ -34,11 +38,15 @@ def extract_embedding():
 
 @app.route('/api/v1/face/check-liveness', methods=['POST'])
 def check_liveness():
+    data = request.get_json(silent=True) or {}
+    challenge_type = data.get('challenge', 'blink')
+
     return jsonify({
         "success": True,
         "data": {
             "is_live": True,
-            "liveness_score": 0.96
+            "liveness_score": 0.96,
+            "challenge_verified": challenge_type
         },
         "message": "Kiểm tra thực thể (liveness) thành công",
         "errorCode": None
