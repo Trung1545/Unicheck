@@ -4,6 +4,7 @@ import com.unicheck.common.dto.ApiResponse;
 import com.unicheck.common.dto.PageResponse;
 import com.unicheck.model.dto.UserCreateRequest;
 import com.unicheck.model.dto.UserResponse;
+import com.unicheck.model.dto.UserUpdateRequest;
 import com.unicheck.model.enums.Role;
 import com.unicheck.model.enums.UserStatus;
 import com.unicheck.service.UserService;
@@ -45,6 +46,18 @@ public class UserController {
     public ResponseEntity<ApiResponse<UserResponse>> getUser(@PathVariable Long id) {
         UserResponse response = userService.getUser(id);
         return ResponseEntity.ok(ApiResponse.ok(response, "Lấy thông tin người dùng thành công"));
+    }
+
+    /**
+     * Chức năng 3: Cập nhật thông tin tài khoản người dùng theo ID (Yêu cầu quyền ADMIN, ghi audit log).
+     */
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<UserResponse>> updateUser(@PathVariable Long id,
+                                                                 @Valid @RequestBody UserUpdateRequest request,
+                                                                 HttpServletRequest httpRequest) {
+        UserResponse response = userService.updateUser(id, request, httpRequest);
+        return ResponseEntity.ok(ApiResponse.ok(response, "Cập nhật thông tin người dùng thành công"));
     }
 
     /**

@@ -34,4 +34,9 @@ public interface UserService {
      * Chức năng 2d: Xem danh sách tài khoản chưa kích hoạt (INACTIVE).
      */
     PageResponse<UserResponse> getInactiveUsers(String search, Pageable pageable);
+
+    /**
+     * Chức năng 3: Cập nhật thông tin tài khoản người dùng (ghi audit log).
+     */
+    UserResponse updateUser(Long id, com.unicheck.model.dto.UserUpdateRequest request, HttpServletRequest httpRequest);
 }

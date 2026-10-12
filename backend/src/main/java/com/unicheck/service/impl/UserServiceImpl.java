@@ -5,6 +5,7 @@ import com.unicheck.exception.AppException;
 import com.unicheck.exception.ErrorCode;
 import com.unicheck.model.dto.UserCreateRequest;
 import com.unicheck.model.dto.UserResponse;
+import com.unicheck.model.dto.UserUpdateRequest;
 import com.unicheck.model.entity.LecturerProfile;
 import com.unicheck.model.entity.StudentProfile;
 import com.unicheck.model.entity.User;
@@ -183,6 +184,107 @@ public class UserServiceImpl implements UserService {
     @Transactional(readOnly = true)
     public PageResponse<UserResponse> getInactiveUsers(String search, Pageable pageable) {
         return getAllUsers(search, null, UserStatus.INACTIVE, pageable);
+    }
+
+    @Override
+    @Transactional
+    public UserResponse updateUser(Long id, UserUpdateRequest request, HttpServletRequest httpRequest) {
+        // 1. Tìm kiếm User theo ID
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng với ID: " + id));
+
+        // 2. Kiểm tra tính duy nhất của email (nếu thay đổi)
+        if (StringUtils.hasText(request.getEmail()) && !request.getEmail().equalsIgnoreCase(user.getEmail())) {
+            if (userRepository.existsByEmail(request.getEmail())) {
+                throw new AppException(ErrorCode.USER_ALREADY_EXISTS, "Email '" + request.getEmail() + "' đã được sử dụng");
+            }
+        }
+
+        // 3. Kiểm tra tính duy nhất của mã định danh (nếu thay đổi)
+        if (StringUtils.hasText(request.getCode()) && !request.getCode().equalsIgnoreCase(user.getCode())) {
+            if (userRepository.existsByCode(request.getCode())) {
+                throw new AppException(ErrorCode.USER_ALREADY_EXISTS, "Mã định danh '" + request.getCode() + "' đã được sử dụng");
+            }
+        }
+
+        // 4. Ghi nhận snapshot cũ trước khi thay đổi (Old Value)
+        String oldValue = String.format("fullName='%s', email='%s', phone='%s', code='%s', role='%s', sex='%s'",
+                user.getFullName(), user.getEmail(), user.getPhone(), user.getCode(), user.getRole(), user.getSex());
+        Role oldRole = user.getRole();
+
+        // 5. Cập nhật các trường thông tin cơ bản
+        if (StringUtils.hasText(request.getFullName())) {
+            user.setFullName(request.getFullName());
+        }
+        if (StringUtils.hasText(request.getEmail())) {
+            user.setEmail(request.getEmail());
+        }
+        if (request.getCode() != null) {
+            user.setCode(request.getCode());
+        }
+        if (request.getPhone() != null) {
+            user.setPhone(request.getPhone());
+        }
+        if (request.getDob() != null) {
+            user.setDob(request.getDob());
+        }
+        if (StringUtils.hasText(request.getSex())) {
+            user.setSex(request.getSex());
+        }
+        if (StringUtils.hasText(request.getAvatar())) {
+            user.setAvatar(request.getAvatar());
+        }
+        if (request.getRole() != null) {
+            user.setRole(request.getRole());
+        }
+        user.setUpdatedAt(LocalDateTime.now());
+
+        // 6. Cập nhật Profile theo vai trò
+        if (user.getRole() == Role.STUDENT) {
+            StudentProfile studentProfile = studentProfileRepository.findByUserId(user.getId())
+                    .orElseGet(() -> StudentProfile.builder().user(user).build());
+
+            if (request.getStudentCourse() != null) studentProfile.setCourse(request.getStudentCourse());
+            if (request.getMajorId() != null) studentProfile.setMajorId(request.getMajorId());
+            if (request.getSpecializationId() != null) studentProfile.setSpecializationId(request.getSpecializationId());
+            if (request.getSubSpecializationId() != null) studentProfile.setSubSpecializationId(request.getSubSpecializationId());
+            studentProfileRepository.save(studentProfile);
+            user.setStudentProfile(studentProfile);
+        } else if (user.getRole() == Role.LECTURER) {
+            LecturerProfile lecturerProfile = lecturerProfileRepository.findByUserId(user.getId())
+                    .orElseGet(() -> LecturerProfile.builder().user(user).build());
+
+            if (request.getDepartment() != null) lecturerProfile.setDepartment(request.getDepartment());
+            if (request.getExpertise() != null) lecturerProfile.setExpertise(request.getExpertise());
+            if (request.getBio() != null) lecturerProfile.setBio(request.getBio());
+            lecturerProfileRepository.save(lecturerProfile);
+            user.setLecturerProfile(lecturerProfile);
+        }
+
+        User updatedUser = userRepository.save(user);
+
+        // 7. Ghi nhận snapshot mới sau khi thay đổi (New Value)
+        String newValue = String.format("fullName='%s', email='%s', phone='%s', code='%s', role='%s', sex='%s'",
+                updatedUser.getFullName(), updatedUser.getEmail(), updatedUser.getPhone(), updatedUser.getCode(), updatedUser.getRole(), updatedUser.getSex());
+
+        // 8. Ghi Audit Log (ai, lúc nào, làm gì)
+        User performer = getCurrentAuthenticatedUser();
+        String action = (oldRole != updatedUser.getRole()) ? "USER_ROLE_CHANGED" : "USER_UPDATE";
+        String description = String.format("Cập nhật tài khoản người dùng: %s (ID: %d)%s",
+                updatedUser.getUsername(),
+                updatedUser.getId(),
+                (oldRole != updatedUser.getRole()) ? " [Đổi vai trò: " + oldRole + " -> " + updatedUser.getRole() + "]" : "");
+
+        systemLogService.logAudit(
+                action,
+                description,
+                performer,
+                oldValue,
+                newValue,
+                httpRequest
+        );
+
+        return mapToUserResponse(updatedUser);
     }
 
     private User getCurrentAuthenticatedUser() {

@@ -2,6 +2,7 @@ package com.unicheck.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unicheck.model.dto.UserCreateRequest;
+import com.unicheck.model.dto.UserUpdateRequest;
 import com.unicheck.model.entity.StudentProfile;
 import com.unicheck.model.entity.SystemLog;
 import com.unicheck.model.entity.User;
@@ -29,6 +30,7 @@ import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -293,5 +295,104 @@ public class UserManagementIntegrationTest {
         mockMvc.perform(get("/api/users/inactive")
                         .header("Authorization", "Bearer " + studentToken))
                 .andExpect(status().isForbidden());
+    }
+
+    // =========================================================================
+    // CHỨC NĂNG 3: CẬP NHẬT TÀI KHOẢN NGƯỜI DÙNG & GHI AUDIT LOG
+    // =========================================================================
+
+    @Test
+    @DisplayName("Chức năng 3: Admin cập nhật thông tin người dùng thành công và ghi nhận Audit Log (oldValue -> newValue)")
+    void testUpdateUser_Success_AndAuditLogged() throws Exception {
+        UserUpdateRequest updateReq = UserUpdateRequest.builder()
+                .fullName("Nguyễn Văn A (Cập Nhật)")
+                .phone("0912345678")
+                .dob(LocalDate.of(2003, 10, 15))
+                .sex("MALE")
+                .studentCourse("K20")
+                .build();
+
+        mockMvc.perform(put("/api/users/" + studentUser.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.fullName", is("Nguyễn Văn A (Cập Nhật)")))
+                .andExpect(jsonPath("$.data.phone", is("0912345678")))
+                .andExpect(jsonPath("$.data.studentCourse", is("K20")));
+
+        // 1. Kiểm tra cập nhật DB
+        User updatedDb = userRepository.findById(studentUser.getId()).orElse(null);
+        assertNotNull(updatedDb);
+        assertEquals("Nguyễn Văn A (Cập Nhật)", updatedDb.getFullName());
+        assertEquals("0912345678", updatedDb.getPhone());
+
+        StudentProfile sp = studentProfileRepository.findByUserId(studentUser.getId()).orElse(null);
+        assertNotNull(sp);
+        assertEquals("K20", sp.getCourse());
+
+        // 2. Kiểm tra Audit Log có lưu oldValue và newValue
+        List<SystemLog> logs = systemLogRepository.findByPerformerIdOrderByCreatedAtDesc(adminUser.getId());
+        assertFalse(logs.isEmpty());
+        SystemLog updateLog = logs.get(0);
+        assertEquals("USER_UPDATE", updateLog.getAction());
+        assertNotNull(updateLog.getOldValue());
+        assertNotNull(updateLog.getNewValue());
+        assertTrue(updateLog.getNewValue().contains("Nguyễn Văn A (Cập Nhật)"));
+    }
+
+    @Test
+    @DisplayName("Chức năng 3: Admin đổi vai trò người dùng (STUDENT -> LECTURER) ghi nhận Audit Log USER_ROLE_CHANGED")
+    void testUpdateUser_RoleChanged_AndAuditLogged() throws Exception {
+        UserUpdateRequest updateReq = UserUpdateRequest.builder()
+                .role(Role.LECTURER)
+                .department("Khoa Công nghệ Thông tin")
+                .expertise("Trí tuệ nhân tạo")
+                .build();
+
+        mockMvc.perform(put("/api/users/" + studentUser.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.role", is("LECTURER")))
+                .andExpect(jsonPath("$.data.department", is("Khoa Công nghệ Thông tin")));
+
+        List<SystemLog> logs = systemLogRepository.findByPerformerIdOrderByCreatedAtDesc(adminUser.getId());
+        assertFalse(logs.isEmpty());
+        SystemLog roleLog = logs.get(0);
+        assertEquals("USER_ROLE_CHANGED", roleLog.getAction());
+        assertTrue(roleLog.getDescription().contains("Đổi vai trò"));
+    }
+
+    @Test
+    @DisplayName("Chức năng 3: Cập nhật email trùng với tài khoản khác trả về 400 Bad Request")
+    void testUpdateUser_DuplicateEmail_ThrowsBadRequest() throws Exception {
+        UserUpdateRequest updateReq = UserUpdateRequest.builder()
+                .email(adminUser.getEmail()) // email của adminUser
+                .build();
+
+        mockMvc.perform(put("/api/users/" + studentUser.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateReq)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("ERR_2011")));
+    }
+
+    @Test
+    @DisplayName("Chức năng 3: Quyền STUDENT không được cập nhật tài khoản quản trị (403 Forbidden)")
+    void testUpdateUser_ForbiddenForStudent() throws Exception {
+        UserUpdateRequest updateReq = UserUpdateRequest.builder()
+                .fullName("Hack Full Name")
+                .build();
+
+        mockMvc.perform(put("/api/users/" + adminUser.getId())
+                        .header("Authorization", "Bearer " + studentToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateReq)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("ERR_2001")));
     }
 }
