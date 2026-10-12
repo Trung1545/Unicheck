@@ -16,6 +16,7 @@ import java.util.List;
     name = "users",
     indexes = {
         @Index(name = "idx_users_email", columnList = "email"),
+        @Index(name = "idx_users_code", columnList = "code"),
         @Index(name = "idx_users_username", columnList = "username"),
         @Index(name = "idx_users_role", columnList = "role"),
         @Index(name = "idx_users_status", columnList = "status")
@@ -31,6 +32,9 @@ public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "code", length = 50)
+    private String code;
 
     @Column(name = "username", nullable = false, unique = true, length = 50)
     private String username;

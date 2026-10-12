@@ -9,7 +9,8 @@ import java.time.LocalDateTime;
 @Table(
     name = "user_permissions",
     indexes = {
-        @Index(name = "idx_user_permissions_user_id", columnList = "user_id")
+        @Index(name = "idx_user_permissions_user_id", columnList = "user_id"),
+        @Index(name = "idx_user_permissions_permission", columnList = "permission")
     }
 )
 @Getter

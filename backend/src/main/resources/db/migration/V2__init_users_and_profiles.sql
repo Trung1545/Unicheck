@@ -6,6 +6,7 @@
 -- 1. users
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(50),
     username VARCHAR(50) NOT NULL UNIQUE,
     password VARCHAR(255),
     full_name VARCHAR(150) NOT NULL,
@@ -13,7 +14,7 @@ CREATE TABLE users (
     dob DATE,
     phone VARCHAR(20),
     sex VARCHAR(10) NOT NULL DEFAULT 'OTHER',
-    role VARCHAR(20) NOT NULL DEFAULT 'STUDENT',
+    role VARCHAR(50) NOT NULL DEFAULT 'STUDENT',
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     face_data_status VARCHAR(20) NOT NULL DEFAULT 'NOT_REGISTERED',
     avatar VARCHAR(255),
@@ -79,7 +80,7 @@ CREATE TABLE user_sessions (
     ip_address VARCHAR(45),
     province VARCHAR(100),
     city VARCHAR(100),
-    latitude DECIMAL(11,8),
+    latitude DECIMAL(10,8),
     longitude DECIMAL(11,8),
     login_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_activity_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -98,27 +99,32 @@ CREATE TABLE access_logs (
     user_agent VARCHAR(255)
 );
 
--- 9. face_encodings (Biometric privacy: only embedding vector stored, no raw face image)
+-- 9. face_encodings
 CREATE TABLE face_encodings (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     encoding_data BYTEA NOT NULL,
     registered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     liveness_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    face_image TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ==============================================================================
--- Search Indexes for Lookup Columns (Email, Username/Code, Status, User ID)
+-- Search Indexes for Lookup Columns (Email, Code / Mã số, Username, Status, User ID)
 -- ==============================================================================
 CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_code ON users(code);
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_status ON users(status);
 CREATE INDEX idx_student_profiles_user_id ON student_profiles(user_id);
+CREATE INDEX idx_student_profiles_major_id ON student_profiles(major_id);
+CREATE INDEX idx_student_profiles_specialization_id ON student_profiles(specialization_id);
 CREATE INDEX idx_lecturer_profiles_user_id ON lecturer_profiles(user_id);
 CREATE INDEX idx_user_permissions_user_id ON user_permissions(user_id);
+CREATE INDEX idx_user_permissions_permission ON user_permissions(permission);
 CREATE INDEX idx_user_device_tokens_user_id ON user_device_tokens(user_id);
 CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX idx_user_sessions_token ON user_sessions(token);

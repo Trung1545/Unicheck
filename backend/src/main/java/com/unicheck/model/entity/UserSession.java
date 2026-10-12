@@ -41,7 +41,7 @@ public class UserSession {
     @Column(name = "city", length = 100)
     private String city;
 
-    @Column(name = "latitude", precision = 11, scale = 8)
+    @Column(name = "latitude", precision = 10, scale = 8)
     private BigDecimal latitude;
 
     @Column(name = "longitude", precision = 11, scale = 8)

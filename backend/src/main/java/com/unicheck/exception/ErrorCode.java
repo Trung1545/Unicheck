@@ -19,6 +19,10 @@ public enum ErrorCode {
     ACCOUNT_INACTIVE("ERR_2004", "Tài khoản chưa được kích hoạt", HttpStatus.FORBIDDEN),
     TOKEN_EXPIRED("ERR_2005", "Mã xác thực JWT đã hết hạn", HttpStatus.UNAUTHORIZED),
     TOKEN_INVALID("ERR_2006", "Mã xác thực JWT không hợp lệ", HttpStatus.UNAUTHORIZED),
+    RATE_LIMIT_EXCEEDED("ERR_2007", "Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 15 phút", HttpStatus.TOO_MANY_REQUESTS),
+    INVALID_OTP("ERR_2008", "Mã xác thực không chính xác hoặc đã hết hạn", HttpStatus.BAD_REQUEST),
+    PASSWORD_MISMATCH("ERR_2009", "Mật khẩu hiện tại không chính xác", HttpStatus.BAD_REQUEST),
+    TOKEN_REVOKED("ERR_2010", "Phiên đăng nhập đã bị thu hồi", HttpStatus.UNAUTHORIZED),
 
     // Face Recognition & Attendance Errors (3000 - 3099)
     FACE_NOT_DETECTED("ERR_3001", "Không phát hiện khuôn mặt trong ảnh", HttpStatus.BAD_REQUEST),

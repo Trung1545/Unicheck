@@ -31,8 +31,8 @@ server:
 security:
   jwt:
     secret: 4c9a58b29f7e1b3d5c7a9e0f2b4d6e8a0c2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d
-    expiration-ms: 3600000
-    refresh-expiration-ms: 86400000
+    expiration-ms: 900000
+    refresh-expiration-ms: 604800000
 
 ai-service:
   url: http://localhost:5000

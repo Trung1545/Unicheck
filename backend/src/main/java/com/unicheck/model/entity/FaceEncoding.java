@@ -38,6 +38,9 @@ public class FaceEncoding {
     @Builder.Default
     private Boolean livenessVerified = false;
 
+    @Column(name = "face_image", columnDefinition = "TEXT")
+    private String faceImage;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();

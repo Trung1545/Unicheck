@@ -7,7 +7,9 @@ import lombok.*;
 @Table(
     name = "student_profiles",
     indexes = {
-        @Index(name = "idx_student_profiles_user_id", columnList = "user_id")
+        @Index(name = "idx_student_profiles_user_id", columnList = "user_id"),
+        @Index(name = "idx_student_profiles_major_id", columnList = "major_id"),
+        @Index(name = "idx_student_profiles_specialization_id", columnList = "specialization_id")
     }
 )
 @Getter
