@@ -1,8 +1,12 @@
 package com.unicheck.service;
 
+import com.unicheck.common.dto.PageResponse;
 import com.unicheck.model.dto.UserCreateRequest;
 import com.unicheck.model.dto.UserResponse;
+import com.unicheck.model.enums.Role;
+import com.unicheck.model.enums.UserStatus;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.data.domain.Pageable;
 
 public interface UserService {
 
@@ -10,4 +14,24 @@ public interface UserService {
      * Chức năng 1: Tạo tài khoản người dùng mới (ghi audit log).
      */
     UserResponse createUser(UserCreateRequest request, HttpServletRequest httpRequest);
+
+    /**
+     * Chức năng 2a: Xem chi tiết tài khoản người dùng theo ID.
+     */
+    UserResponse getUser(Long id);
+
+    /**
+     * Chức năng 2b: Xem danh sách người dùng có phân trang, tìm kiếm và lọc theo vai trò, trạng thái.
+     */
+    PageResponse<UserResponse> getAllUsers(String search, Role role, UserStatus status, Pageable pageable);
+
+    /**
+     * Chức năng 2c: Xem danh sách tài khoản đã kích hoạt (ACTIVE).
+     */
+    PageResponse<UserResponse> getActiveUsers(String search, Pageable pageable);
+
+    /**
+     * Chức năng 2d: Xem danh sách tài khoản chưa kích hoạt (INACTIVE).
+     */
+    PageResponse<UserResponse> getInactiveUsers(String search, Pageable pageable);
 }

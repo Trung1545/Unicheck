@@ -27,6 +27,7 @@ import java.util.List;
 
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -179,5 +180,118 @@ public class UserManagementIntegrationTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode", is("ERR_2001")));
+    }
+
+    // =========================================================================
+    // CHỨC NĂNG 2: XEM CHI TIẾT & DANH SÁCH TÀI KHOẢN (PHÂN TRANG, TÌM KIẾM, LỌC)
+    // =========================================================================
+
+    @Test
+    @DisplayName("Chức năng 2a: Admin xem chi tiết tài khoản theo ID thành công")
+    void testGetUserById_Success() throws Exception {
+        mockMvc.perform(get("/api/users/" + studentUser.getId())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.id", is(studentUser.getId().intValue())))
+                .andExpect(jsonPath("$.data.username", is(studentUser.getUsername())))
+                .andExpect(jsonPath("$.data.email", is(studentUser.getEmail())))
+                .andExpect(jsonPath("$.data.role", is("STUDENT")));
+    }
+
+    @Test
+    @DisplayName("Chức năng 2a: Xem tài khoản không tồn tại trả về 404 Not Found")
+    void testGetUserById_NotFound() throws Exception {
+        mockMvc.perform(get("/api/users/999999")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode", is("ERR_1002")));
+    }
+
+    @Test
+    @DisplayName("Chức năng 2b: Admin xem danh sách có phân trang, tìm kiếm từ khóa và lọc vai trò")
+    void testGetAllUsers_PaginationAndFilters() throws Exception {
+        // Tạo thêm 1 user để test tìm kiếm
+        long ts = System.currentTimeMillis();
+        User extraUser = User.builder()
+                .code("SPE_SEARCH_" + ts)
+                .username("uniquesearch_" + ts)
+                .password(passwordEncoder.encode("Pass@123"))
+                .fullName("Người Dùng Đặc Biệt")
+                .email("uniquesearch_" + ts + "@unicheck.edu.vn")
+                .role(Role.LECTURER)
+                .status(UserStatus.ACTIVE)
+                .build();
+        userRepository.save(extraUser);
+
+        // 1. Phân trang: size = 2, page = 0
+        mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("page", "0")
+                        .param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.content", hasSize(lessThanOrEqualTo(2))))
+                .andExpect(jsonPath("$.data.pageNumber", is(0)))
+                .andExpect(jsonPath("$.data.totalElements", greaterThanOrEqualTo(2)));
+
+        // 2. Tìm kiếm từ khóa: "uniquesearch"
+        mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("search", "uniquesearch_" + ts))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content", hasSize(1)))
+                .andExpect(jsonPath("$.data.content[0].username", is(extraUser.getUsername())));
+
+        // 3. Lọc theo Role = LECTURER
+        mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("role", "LECTURER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content", hasItem(hasEntry("role", "LECTURER"))));
+    }
+
+    @Test
+    @DisplayName("Chức năng 2c & 2d: Xem danh sách tài khoản đã kích hoạt (ACTIVE) và chưa kích hoạt (INACTIVE)")
+    void testGetActiveAndInactiveUsers() throws Exception {
+        long ts = System.currentTimeMillis();
+        User inactiveUser = User.builder()
+                .code("INACT_" + ts)
+                .username("inactive_" + ts)
+                .fullName("Chưa Kích Hoạt")
+                .email("inactive_" + ts + "@unicheck.edu.vn")
+                .role(Role.STUDENT)
+                .status(UserStatus.INACTIVE)
+                .build();
+        userRepository.save(inactiveUser);
+
+        // Danh sách kích hoạt -> phải chứa studentUser (ACTIVE), không chứa inactiveUser
+        mockMvc.perform(get("/api/users/active")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content", hasItem(hasEntry("status", "ACTIVE"))));
+
+        // Danh sách chưa kích hoạt -> phải chứa inactiveUser (INACTIVE)
+        mockMvc.perform(get("/api/users/inactive")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content", hasItem(hasEntry("status", "INACTIVE"))));
+    }
+
+    @Test
+    @DisplayName("Chức năng 2: Quyền STUDENT bị chặn khi xem danh sách quản trị (403 Forbidden)")
+    void testViewingEndpoints_ForbiddenForStudent() throws Exception {
+        mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + studentToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("ERR_2001")));
+
+        mockMvc.perform(get("/api/users/active")
+                        .header("Authorization", "Bearer " + studentToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/users/inactive")
+                        .header("Authorization", "Bearer " + studentToken))
+                .andExpect(status().isForbidden());
     }
 }

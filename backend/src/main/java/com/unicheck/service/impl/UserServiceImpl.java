@@ -1,5 +1,6 @@
 package com.unicheck.service.impl;
 
+import com.unicheck.common.dto.PageResponse;
 import com.unicheck.exception.AppException;
 import com.unicheck.exception.ErrorCode;
 import com.unicheck.model.dto.UserCreateRequest;
@@ -16,15 +17,21 @@ import com.unicheck.repository.StudentProfileRepository;
 import com.unicheck.repository.UserRepository;
 import com.unicheck.service.SystemLogService;
 import com.unicheck.service.UserService;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+
+import java.util.ArrayList;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -125,6 +132,57 @@ public class UserServiceImpl implements UserService {
         );
 
         return mapToUserResponse(savedUser);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserResponse getUser(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng với ID: " + id));
+        return mapToUserResponse(user);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<UserResponse> getAllUsers(String search, Role role, UserStatus status, Pageable pageable) {
+        Specification<User> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (StringUtils.hasText(search)) {
+                String pattern = "%" + search.trim().toLowerCase() + "%";
+                Predicate usernameMatch = cb.like(cb.lower(root.get("username")), pattern);
+                Predicate fullNameMatch = cb.like(cb.lower(root.get("fullName")), pattern);
+                Predicate emailMatch = cb.like(cb.lower(root.get("email")), pattern);
+                Predicate codeMatch = cb.like(cb.lower(root.get("code")), pattern);
+                predicates.add(cb.or(usernameMatch, fullNameMatch, emailMatch, codeMatch));
+            }
+
+            if (role != null) {
+                predicates.add(cb.equal(root.get("role"), role));
+            }
+
+            if (status != null) {
+                predicates.add(cb.equal(root.get("status"), status));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        Page<User> page = userRepository.findAll(spec, pageable);
+        Page<UserResponse> mappedPage = page.map(this::mapToUserResponse);
+        return PageResponse.of(mappedPage);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<UserResponse> getActiveUsers(String search, Pageable pageable) {
+        return getAllUsers(search, null, UserStatus.ACTIVE, pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<UserResponse> getInactiveUsers(String search, Pageable pageable) {
+        return getAllUsers(search, null, UserStatus.INACTIVE, pageable);
     }
 
     private User getCurrentAuthenticatedUser() {
