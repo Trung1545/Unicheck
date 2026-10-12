@@ -28,6 +28,7 @@ import java.util.List;
 
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -392,6 +393,71 @@ public class UserManagementIntegrationTest {
                         .header("Authorization", "Bearer " + studentToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updateReq)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode", is("ERR_2001")));
+    }
+
+    // =========================================================================
+    // CHỨC NĂNG 4: XÓA TÀI KHOẢN NGƯỜI DÙNG & GHI AUDIT LOG
+    // =========================================================================
+
+    @Test
+    @DisplayName("Chức năng 4: Admin xóa tài khoản người dùng thành công và ghi nhận Audit Log")
+    void testDeleteUser_Success_AndAuditLogged() throws Exception {
+        long ts = System.currentTimeMillis();
+        User userToDelete = User.builder()
+                .code("DEL_" + ts)
+                .username("todelete_" + ts)
+                .fullName("Người Dùng Sắp Xóa")
+                .email("todelete_" + ts + "@unicheck.edu.vn")
+                .role(Role.STUDENT)
+                .status(UserStatus.INACTIVE)
+                .build();
+        userRepository.save(userToDelete);
+        Long deleteId = userToDelete.getId();
+
+        mockMvc.perform(delete("/api/users/" + deleteId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.message", containsString("Xóa tài khoản người dùng thành công")));
+
+        // 1. Kiểm tra đối tượng đã bị xóa khỏi DB
+        assertFalse(userRepository.findById(deleteId).isPresent());
+
+        // 2. Kiểm tra Audit Log được ghi lại
+        List<SystemLog> logs = systemLogRepository.findByPerformerIdOrderByCreatedAtDesc(adminUser.getId());
+        assertFalse(logs.isEmpty());
+        SystemLog deleteLog = logs.get(0);
+        assertEquals("USER_DELETE", deleteLog.getAction());
+        assertNotNull(deleteLog.getOldValue());
+        assertTrue(deleteLog.getDescription().contains("todelete_" + ts));
+    }
+
+    @Test
+    @DisplayName("Chức năng 4: Xóa người dùng không tồn tại trả về 404 Not Found")
+    void testDeleteUser_NotFound_Throws404() throws Exception {
+        mockMvc.perform(delete("/api/users/888888")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode", is("ERR_1002")));
+    }
+
+    @Test
+    @DisplayName("Chức năng 4: Admin không thể tự xóa tài khoản của chính mình (400 Bad Request)")
+    void testDeleteUser_SelfDeletion_ThrowsBadRequest() throws Exception {
+        mockMvc.perform(delete("/api/users/" + adminUser.getId())
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("ERR_1001")))
+                .andExpect(jsonPath("$.message", containsString("không thể tự xóa")));
+    }
+
+    @Test
+    @DisplayName("Chức năng 4: Quyền STUDENT không được xóa tài khoản (403 Forbidden)")
+    void testDeleteUser_ForbiddenForStudent() throws Exception {
+        mockMvc.perform(delete("/api/users/" + studentUser.getId())
+                        .header("Authorization", "Bearer " + studentToken))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode", is("ERR_2001")));
     }

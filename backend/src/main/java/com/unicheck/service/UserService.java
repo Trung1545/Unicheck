@@ -39,4 +39,9 @@ public interface UserService {
      * Chức năng 3: Cập nhật thông tin tài khoản người dùng (ghi audit log).
      */
     UserResponse updateUser(Long id, com.unicheck.model.dto.UserUpdateRequest request, HttpServletRequest httpRequest);
+
+    /**
+     * Chức năng 4: Xóa tài khoản người dùng theo ID (ghi audit log).
+     */
+    void deleteUser(Long id, HttpServletRequest httpRequest);
 }

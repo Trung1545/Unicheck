@@ -61,6 +61,16 @@ public class UserController {
     }
 
     /**
+     * Chức năng 4: Xóa tài khoản người dùng theo ID (Yêu cầu quyền ADMIN, ghi audit log).
+     */
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> deleteUser(@PathVariable Long id, HttpServletRequest httpRequest) {
+        userService.deleteUser(id, httpRequest);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Xóa tài khoản người dùng thành công"));
+    }
+
+    /**
      * Chức năng 2b: Xem danh sách người dùng có phân trang, tìm kiếm, lọc vai trò & trạng thái.
      */
     @GetMapping

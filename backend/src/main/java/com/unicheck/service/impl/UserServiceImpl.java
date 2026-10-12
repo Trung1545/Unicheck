@@ -287,6 +287,41 @@ public class UserServiceImpl implements UserService {
         return mapToUserResponse(updatedUser);
     }
 
+    @Override
+    @Transactional
+    public void deleteUser(Long id, HttpServletRequest httpRequest) {
+        // 1. Kiểm tra tồn tại
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng với ID: " + id));
+
+        // 2. Không cho phép tự xóa tài khoản của chính mình
+        User performer = getCurrentAuthenticatedUser();
+        if (performer != null && performer.getId().equals(id)) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Bạn không thể tự xóa tài khoản của chính mình");
+        }
+
+        // 3. Snapshot thông tin cũ để ghi Audit log
+        String oldValue = String.format("id=%d, username='%s', email='%s', fullName='%s', code='%s', role='%s', status='%s'",
+                user.getId(), user.getUsername(), user.getEmail(), user.getFullName(),
+                user.getCode() != null ? user.getCode() : "N/A", user.getRole(), user.getStatus());
+
+        // 4. Thực hiện xóa đối tượng
+        userRepository.delete(user);
+
+        // 5. Ghi Audit Log (ai, lúc nào, làm gì)
+        String description = String.format("Xóa tài khoản người dùng: %s (ID: %d, Vai trò: %s)",
+                user.getUsername(), id, user.getRole());
+
+        systemLogService.logAudit(
+                "USER_DELETE",
+                description,
+                performer,
+                oldValue,
+                null,
+                httpRequest
+        );
+    }
+
     private User getCurrentAuthenticatedUser() {
         try {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
