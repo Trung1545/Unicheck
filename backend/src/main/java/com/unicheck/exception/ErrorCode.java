@@ -23,6 +23,7 @@ public enum ErrorCode {
     INVALID_OTP("ERR_2008", "Mã xác thực không chính xác hoặc đã hết hạn", HttpStatus.BAD_REQUEST),
     PASSWORD_MISMATCH("ERR_2009", "Mật khẩu hiện tại không chính xác", HttpStatus.BAD_REQUEST),
     TOKEN_REVOKED("ERR_2010", "Phiên đăng nhập đã bị thu hồi", HttpStatus.UNAUTHORIZED),
+    USER_ALREADY_EXISTS("ERR_2011", "Tên đăng nhập, email hoặc mã định danh đã tồn tại trong hệ thống", HttpStatus.BAD_REQUEST),
 
     // Face Recognition & Attendance Errors (3000 - 3099)
     FACE_NOT_DETECTED("ERR_3001", "Không phát hiện khuôn mặt trong ảnh", HttpStatus.BAD_REQUEST),
