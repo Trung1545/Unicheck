@@ -44,4 +44,19 @@ public interface UserService {
      * Chức năng 4: Xóa tài khoản người dùng theo ID (ghi audit log).
      */
     void deleteUser(Long id, HttpServletRequest httpRequest);
+
+    /**
+     * Chức năng 5: Cập nhật trạng thái tài khoản (ACTIVE / BLOCKED / INACTIVE).
+     */
+    UserResponse updateUserStatus(Long id, UserStatus status, HttpServletRequest httpRequest);
+
+    /**
+     * Chức năng 6: Kiểm tra tên đăng nhập đã tồn tại hay chưa.
+     */
+    boolean existsByUsername(String username);
+
+    /**
+     * Chức năng 7: Nhập danh sách tài khoản từ file CSV/Excel.
+     */
+    com.unicheck.model.dto.CsvImportResultResponse importUsersCsv(org.springframework.web.multipart.MultipartFile file, HttpServletRequest httpRequest);
 }

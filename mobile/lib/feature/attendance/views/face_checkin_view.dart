@@ -3,7 +3,7 @@ import 'package:get/get.dart';
 import '../../auth/controllers/auth_controller.dart';
 
 class FaceCheckinView extends StatelessWidget {
-  FaceCheckinView({Key? key}) : super(key: key);
+  FaceCheckinView({super.key});
 
   final AuthController authController = Get.find<AuthController>();
 
@@ -36,9 +36,9 @@ class FaceCheckinView extends StatelessWidget {
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      Column(
+                      const Column(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
+                        children: [
                           Icon(
                             Icons.camera_alt_outlined,
                             size: 64,
@@ -109,10 +109,10 @@ class FaceCheckinView extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: () {
                   Get.snackbar(
-                    'Điểm danh thành công',
-                    'Độ khớp khuôn mặt: 99.2% - Liveness: Hợp lệ',
+                    'Thông báo hệ thống',
+                    'Tính năng camera sinh trắc học đang được đồng bộ với AI Service',
                     snackPosition: SnackPosition.BOTTOM,
-                    backgroundColor: const Color(0xFF065F46),
+                    backgroundColor: const Color(0xFF1E293B),
                     colorText: Colors.white,
                   );
                 },

@@ -37,7 +37,7 @@ server:
 # Security & Application Specific Configuration
 security:
   jwt:
-    secret: ${SECURITY_JWT_SECRET:${JWT_SECRET:4c9a58b29f7e1b3d5c7a9e0f2b4d6e8a0c2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d}}
+    secret: ${SECURITY_JWT_SECRET:${JWT_SECRET:}}
     expiration-ms: ${SECURITY_JWT_EXPIRATION:${JWT_EXPIRATION_MS:900000}}
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
 

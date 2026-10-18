@@ -12,4 +12,6 @@ public interface FaceEncodingRepository extends JpaRepository<FaceEncoding, Long
     Optional<FaceEncoding> findByUserId(Long userId);
 
     boolean existsByUserId(Long userId);
+
+    void deleteByUserId(Long userId);
 }

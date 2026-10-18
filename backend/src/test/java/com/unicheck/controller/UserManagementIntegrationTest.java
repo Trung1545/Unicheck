@@ -26,12 +26,17 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.LocalDate;
 import java.util.List;
 
+import com.unicheck.model.dto.UserStatusUpdateRequest;
+import org.springframework.mock.web.MockMultipartFile;
+
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -460,5 +465,100 @@ public class UserManagementIntegrationTest {
                         .header("Authorization", "Bearer " + studentToken))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode", is("ERR_2001")));
+    }
+
+    // =========================================================================
+    // CHỨC NĂNG 5, 6, 7: KHÓA/MỞ KHÓA, KIỂM TRA USERNAME, IMPORT CSV
+    // =========================================================================
+
+    @Test
+    @DisplayName("Chức năng 5: Admin khóa tài khoản (BLOCKED) và mở khóa tài khoản (ACTIVE) thành công")
+    void testUpdateUserStatus_LockAndUnlock() throws Exception {
+        // 1. Khóa tài khoản
+        UserStatusUpdateRequest lockReq = new UserStatusUpdateRequest(UserStatus.BLOCKED);
+        mockMvc.perform(patch("/api/users/" + studentUser.getId() + "/status")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(lockReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.status", is("BLOCKED")));
+
+        User lockedUser = userRepository.findById(studentUser.getId()).orElse(null);
+        assertNotNull(lockedUser);
+        assertEquals(UserStatus.BLOCKED, lockedUser.getStatus());
+
+        // 2. Mở khóa tài khoản
+        UserStatusUpdateRequest unlockReq = new UserStatusUpdateRequest(UserStatus.ACTIVE);
+        mockMvc.perform(patch("/api/users/" + studentUser.getId() + "/status")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(unlockReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.status", is("ACTIVE")));
+
+        User unlockedUser = userRepository.findById(studentUser.getId()).orElse(null);
+        assertNotNull(unlockedUser);
+        assertEquals(UserStatus.ACTIVE, unlockedUser.getStatus());
+    }
+
+    @Test
+    @DisplayName("Chức năng 5: Admin không thể tự khóa tài khoản của chính mình (400 Bad Request)")
+    void testUpdateUserStatus_SelfLock_ThrowsBadRequest() throws Exception {
+        UserStatusUpdateRequest lockReq = new UserStatusUpdateRequest(UserStatus.BLOCKED);
+        mockMvc.perform(patch("/api/users/" + adminUser.getId() + "/status")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(lockReq)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode", is("ERR_1001")))
+                .andExpect(jsonPath("$.message", containsString("không thể tự khóa")));
+    }
+
+    @Test
+    @DisplayName("Chức năng 6: Kiểm tra username tồn tại trả về true, không tồn tại trả về false")
+    void testCheckUsername_Availability() throws Exception {
+        // Tồn tại
+        mockMvc.perform(get("/api/users/check-username")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("username", studentUser.getUsername()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", is(true)));
+
+        // Không tồn tại
+        mockMvc.perform(get("/api/users/check-username")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("username", "non_existing_user_" + System.currentTimeMillis()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", is(false)));
+    }
+
+    @Test
+    @DisplayName("Chức năng 7: Admin import danh sách sinh viên từ file CSV thành công")
+    void testImportUsersCsv_Success() throws Exception {
+        long ts = System.currentTimeMillis();
+        String csvContent = "code,username,fullName,email,role,phone\n" +
+                "SV_IMP1_" + ts + ",userimp1_" + ts + ",Nguyễn Văn Một,imp1_" + ts + "@unicheck.edu.vn,STUDENT,0912345671\n" +
+                "SV_IMP2_" + ts + ",userimp2_" + ts + ",Trần Thị Hai,imp2_" + ts + "@unicheck.edu.vn,STUDENT,0912345672\n";
+
+        MockMultipartFile csvFile = new MockMultipartFile(
+                "file",
+                "students.csv",
+                "text/csv",
+                csvContent.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        );
+
+        mockMvc.perform(multipart("/api/users/import-csv")
+                        .file(csvFile)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.totalRecords", is(2)))
+                .andExpect(jsonPath("$.data.successCount", is(2)))
+                .andExpect(jsonPath("$.data.failedCount", is(0)));
+
+        assertTrue(userRepository.existsByUsername("userimp1_" + ts));
+        assertTrue(userRepository.existsByUsername("userimp2_" + ts));
     }
 }

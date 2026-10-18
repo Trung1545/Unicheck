@@ -17,7 +17,7 @@ import java.util.UUID;
 @Component
 public class JwtUtil {
 
-    @Value("${security.jwt.secret:4c9a58b29f7e1b3d5c7a9e0f2b4d6e8a0c2e4f6a8b0d2e4f6a8b0d2e4f6a8b0d}")
+    @Value("${security.jwt.secret}")
     private String secret;
 
     // 15 minutes = 900,000 ms (as required by prompt)
@@ -42,11 +42,16 @@ public class JwtUtil {
         this.key = Keys.hmacShaKeyFor(keyBytes);
     }
 
+    public static final String ISSUER = "unicheck-backend";
+    public static final String AUDIENCE = "unicheck-client";
+
     public String generateAccessToken(User user) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + accessTokenExpirationMs);
 
         return Jwts.builder()
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
                 .subject(user.getUsername())
                 .claim("userId", user.getId())
                 .claim("role", user.getRole() != null ? user.getRole().name() : "STUDENT")
@@ -64,6 +69,8 @@ public class JwtUtil {
         Date expiryDate = new Date(now.getTime() + refreshTokenExpirationMs);
 
         return Jwts.builder()
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
                 .subject(user.getUsername())
                 .claim("userId", user.getId())
                 .claim("type", "refresh")
@@ -80,6 +87,8 @@ public class JwtUtil {
         Date expiryDate = new Date(now.getTime() + expirationMs);
 
         return Jwts.builder()
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
                 .subject(user.getUsername())
                 .claim("userId", user.getId())
                 .claim("role", user.getRole() != null ? user.getRole().name() : "STUDENT")
@@ -107,6 +116,42 @@ public class JwtUtil {
     public String extractRole(String token) {
         Object role = getClaims(token).get("role");
         return role != null ? role.toString() : null;
+    }
+
+    public String extractTokenType(String token) {
+        try {
+            Object type = getClaims(token).get("type");
+            return type != null ? type.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public boolean isAccessToken(String token) {
+        return "access".equalsIgnoreCase(extractTokenType(token));
+    }
+
+    public boolean isRefreshToken(String token) {
+        return "refresh".equalsIgnoreCase(extractTokenType(token));
+    }
+
+    public static String hashToken(String token) {
+        if (token == null) {
+            return "";
+        }
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return String.valueOf(token.hashCode());
+        }
     }
 
     public boolean validateToken(String token) {

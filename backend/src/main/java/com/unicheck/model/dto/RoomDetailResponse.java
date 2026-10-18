@@ -1,0 +1,70 @@
+package com.unicheck.model.dto;
+
+import com.unicheck.model.entity.Room;
+import com.unicheck.model.enums.RoomStatus;
+import com.unicheck.model.enums.RoomType;
+import lombok.*;
+
+import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class RoomDetailResponse {
+
+    private Long id;
+    private String code;
+    private String name;
+    private Integer capacity;
+    private String building;
+    private String description;
+    private Integer floor;
+    private Integer gridRow;
+    private Integer gridCol;
+    private Integer gridRowSpan;
+    private Integer gridColSpan;
+    private RoomType type;
+    private RoomStatus status;
+    private List<RoomWifiAccessPointResponse> wifiAccessPoints;
+    private Integer assignedWifiCount;
+    private String kioskName;
+    private String kioskStatus;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+
+    public static RoomDetailResponse fromEntity(Room room) {
+        if (room == null) return null;
+        List<RoomWifiAccessPointResponse> aps = room.getRoomWifiAccessPoints() != null
+                ? room.getRoomWifiAccessPoints().stream()
+                .map(RoomWifiAccessPointResponse::fromEntity)
+                .collect(Collectors.toList())
+                : Collections.emptyList();
+
+        return RoomDetailResponse.builder()
+                .id(room.getId())
+                .code(room.getCode())
+                .name(room.getName())
+                .capacity(room.getCapacity())
+                .building(room.getBuilding())
+                .description(room.getDescription())
+                .floor(room.getFloor())
+                .gridRow(room.getGridRow())
+                .gridCol(room.getGridCol())
+                .gridRowSpan(room.getGridRowSpan())
+                .gridColSpan(room.getGridColSpan())
+                .type(room.getType())
+                .status(room.getStatus())
+                .wifiAccessPoints(aps)
+                .assignedWifiCount(aps.size())
+                .kioskName("Kiosk-" + room.getCode())
+                .kioskStatus("Online")
+                .createdAt(room.getCreatedAt())
+                .updatedAt(room.getUpdatedAt())
+                .build();
+    }
+}

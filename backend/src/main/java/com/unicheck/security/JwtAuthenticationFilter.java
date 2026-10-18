@@ -35,8 +35,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (StringUtils.hasText(jwt)) {
                 // Check if token has been revoked / blacklisted on logout
                 if (tokenRedisService.isAccessTokenRevoked(jwt)) {
-                    log.debug("JWT token is revoked/blacklisted: {}", jwt);
+                    log.debug("JWT token is revoked/blacklisted: {}", JwtUtil.hashToken(jwt));
                     request.setAttribute("jwt_revoked", true);
+                } else if (!jwtUtil.isAccessToken(jwt)) {
+                    log.warn("Non-access token (e.g. refresh token or invalid type) rejected for URI={}", request.getRequestURI());
+                    request.setAttribute("jwt_invalid_type", true);
                 } else if (jwtUtil.validateToken(jwt)) {
                     String username = jwtUtil.extractUsername(jwt);
                     UserDetails userDetails = userDetailsService.loadUserByUsername(username);

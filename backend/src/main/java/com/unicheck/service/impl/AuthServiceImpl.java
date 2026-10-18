@@ -25,6 +25,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -138,10 +139,10 @@ public class AuthServiceImpl implements AuthService {
             long remainingMs = jwtUtil.getRemainingExpirationMs(token);
             tokenRedisService.blacklistAccessToken(token, Duration.ofMillis(remainingMs));
 
-            // 2. Revoke associated refresh token from Redis
-            String linkedRefreshToken = tokenRedisService.getRefreshTokenByAccessToken(token);
-            if (linkedRefreshToken != null) {
-                tokenRedisService.revokeRefreshToken(linkedRefreshToken);
+            // 2. Revoke associated refresh token from Redis (by linked hash)
+            String linkedRefreshTokenHash = tokenRedisService.getRefreshTokenHashByAccessToken(token);
+            if (linkedRefreshTokenHash != null) {
+                tokenRedisService.revokeRefreshTokenByHash(linkedRefreshTokenHash);
             }
 
             String headerRefreshToken = httpRequest != null ? httpRequest.getHeader("X-Refresh-Token") : null;
@@ -155,19 +156,17 @@ public class AuthServiceImpl implements AuthService {
                 } catch (Exception ignored) {}
             }
 
-            // 3. Revoke all user refresh tokens and invalidate sessions
+            // 3. Invalidate ONLY this device session in database (multi-device isolation)
+            Optional<UserSession> currentSession = userSessionRepository.findByToken(token);
+            if (currentSession.isPresent()) {
+                UserSession s = currentSession.get();
+                s.setIsActive(false);
+                s.setLastActivityTime(LocalDateTime.now());
+                userSessionRepository.save(s);
+            }
+
             if (currentUsername != null) {
-                tokenRedisService.revokeUserRefreshTokens(currentUsername);
-
                 userRepository.findByUsername(currentUsername).ifPresent(user -> {
-                    // Invalidate active sessions
-                    List<UserSession> sessions = userSessionRepository.findByUserIdAndIsActiveTrue(user.getId());
-                    for (UserSession s : sessions) {
-                        s.setIsActive(false);
-                        s.setLastActivityTime(LocalDateTime.now());
-                    }
-                    userSessionRepository.saveAll(sessions);
-
                     // Record logout in AccessLog
                     AccessLog logoutLog = AccessLog.builder()
                             .user(user)
@@ -184,25 +183,34 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public TokenRefreshResponse refreshToken(RefreshTokenRequest request) {
         String refreshToken = request.getRefreshToken();
         if (!StringUtils.hasText(refreshToken)) {
             throw new AppException(ErrorCode.TOKEN_INVALID);
         }
 
-        // 1. Check if refresh token is in Redis and not revoked
-        String username = tokenRedisService.getUsernameFromRefreshToken(refreshToken);
-        if (username == null || tokenRedisService.isRefreshTokenRevoked(refreshToken)) {
+        // 1. Check if token is strictly a refresh token
+        if (!jwtUtil.isRefreshToken(refreshToken)) {
+            throw new AppException(ErrorCode.TOKEN_INVALID);
+        }
+
+        // 2. Check if refresh token was already used (Reuse Detection) or revoked
+        if (tokenRedisService.isRefreshTokenReused(refreshToken) || tokenRedisService.isRefreshTokenRevoked(refreshToken)) {
             throw new AppException(ErrorCode.TOKEN_REVOKED);
         }
 
-        // 2. Validate token signature and expiration
+        String username = tokenRedisService.getUsernameFromRefreshToken(refreshToken);
+        if (username == null) {
+            throw new AppException(ErrorCode.TOKEN_REVOKED);
+        }
+
+        // 3. Validate token signature and expiration
         if (!jwtUtil.validateToken(refreshToken)) {
             throw new AppException(ErrorCode.TOKEN_EXPIRED);
         }
 
-        // 3. Lookup user
+        // 4. Lookup user
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new AppException(ErrorCode.INVALID_CREDENTIALS));
 
@@ -210,13 +218,17 @@ public class AuthServiceImpl implements AuthService {
             throw new AppException(ErrorCode.ACCOUNT_LOCKED);
         }
 
-        // 4. Generate new access token and link with refresh token
+        // 5. Generate new access token and NEW rotated refresh token (Rotation)
         String newAccessToken = jwtUtil.generateAccessToken(user);
-        tokenRedisService.linkAccessTokenToRefreshToken(newAccessToken, refreshToken, Duration.ofMillis(jwtUtil.getRefreshTokenExpirationMs()));
+        String newRefreshToken = jwtUtil.generateRefreshToken(user);
+
+        // 6. Rotate token in Redis (marks old token as 'used' to catch reuse, saves new token)
+        tokenRedisService.rotateRefreshToken(refreshToken, newRefreshToken, username, Duration.ofMillis(jwtUtil.getRefreshTokenExpirationMs()));
+        tokenRedisService.linkAccessTokenToRefreshToken(newAccessToken, newRefreshToken, Duration.ofMillis(jwtUtil.getRefreshTokenExpirationMs()));
 
         return TokenRefreshResponse.builder()
                 .token(newAccessToken)
-                .refreshToken(refreshToken)
+                .refreshToken(newRefreshToken)
                 .tokenType("Bearer")
                 .expiresIn(jwtUtil.getAccessTokenExpirationMs() / 1000)
                 .build();

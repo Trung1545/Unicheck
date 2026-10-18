@@ -3,6 +3,7 @@ package com.unicheck.service.impl;
 import com.unicheck.common.dto.PageResponse;
 import com.unicheck.exception.AppException;
 import com.unicheck.exception.ErrorCode;
+import com.unicheck.model.dto.CsvImportResultResponse;
 import com.unicheck.model.dto.UserCreateRequest;
 import com.unicheck.model.dto.UserResponse;
 import com.unicheck.model.dto.UserUpdateRequest;
@@ -31,6 +32,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 
 import java.util.ArrayList;
 
@@ -237,6 +243,9 @@ public class UserServiceImpl implements UserService {
         if (request.getRole() != null) {
             user.setRole(request.getRole());
         }
+        if (request.getStatus() != null) {
+            user.setStatus(request.getStatus());
+        }
         user.setUpdatedAt(LocalDateTime.now());
 
         // 6. Cập nhật Profile theo vai trò
@@ -320,6 +329,163 @@ public class UserServiceImpl implements UserService {
                 null,
                 httpRequest
         );
+    }
+
+    @Override
+    @Transactional
+    public UserResponse updateUserStatus(Long id, UserStatus status, HttpServletRequest httpRequest) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new AppException(ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng với ID: " + id));
+
+        User performer = getCurrentAuthenticatedUser();
+        if (performer != null && performer.getId().equals(id) && status == UserStatus.BLOCKED) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Bạn không thể tự khóa tài khoản của chính mình");
+        }
+
+        UserStatus oldStatus = user.getStatus();
+        user.setStatus(status);
+        user.setUpdatedAt(LocalDateTime.now());
+        User savedUser = userRepository.save(user);
+
+        systemLogService.logAudit(
+                "USER_STATUS_UPDATE",
+                String.format("Thay đổi trạng thái người dùng %s (ID: %d): %s -> %s", user.getUsername(), id, oldStatus, status),
+                performer,
+                "status=" + oldStatus,
+                "status=" + status,
+                httpRequest
+        );
+
+        return mapToUserResponse(savedUser);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean existsByUsername(String username) {
+        if (!StringUtils.hasText(username)) {
+            return false;
+        }
+        return userRepository.existsByUsername(username.trim());
+    }
+
+    @Override
+    @Transactional
+    public CsvImportResultResponse importUsersCsv(MultipartFile file, HttpServletRequest httpRequest) {
+        if (file == null || file.isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Tệp import không được để trống");
+        }
+
+        List<String> errors = new ArrayList<>();
+        int totalRecords = 0;
+        int successCount = 0;
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            int lineNumber = 0;
+
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                // Check and skip header
+                if (lineNumber == 1 && (line.toLowerCase().contains("username") || line.toLowerCase().contains("email") || line.toLowerCase().contains("code"))) {
+                    continue;
+                }
+
+                totalRecords++;
+                String[] parts = line.split("[,;]");
+                if (parts.length < 3) {
+                    errors.add(String.format("Dòng %d: Không đủ các trường bắt buộc (cần ít nhất Mã, Tên đăng nhập, Email)", lineNumber));
+                    continue;
+                }
+
+                // Expected format: code,username,fullName,email,role,phone
+                String code = parts.length > 0 ? parts[0].trim() : "";
+                String username = parts.length > 1 ? parts[1].trim() : "";
+                String fullName = parts.length > 2 ? parts[2].trim() : "";
+                String email = parts.length > 3 ? parts[3].trim() : "";
+                String roleStr = parts.length > 4 ? parts[4].trim() : "STUDENT";
+                String phone = parts.length > 5 ? parts[5].trim() : null;
+
+                if (!StringUtils.hasText(username) || !StringUtils.hasText(email)) {
+                    errors.add(String.format("Dòng %d: Thiếu tên đăng nhập hoặc email", lineNumber));
+                    continue;
+                }
+
+                if (userRepository.existsByUsername(username)) {
+                    errors.add(String.format("Dòng %d: Tên đăng nhập '%s' đã tồn tại", lineNumber, username));
+                    continue;
+                }
+
+                if (userRepository.existsByEmail(email)) {
+                    errors.add(String.format("Dòng %d: Email '%s' đã tồn tại", lineNumber, email));
+                    continue;
+                }
+
+                if (StringUtils.hasText(code) && userRepository.existsByCode(code)) {
+                    errors.add(String.format("Dòng %d: Mã định danh '%s' đã tồn tại", lineNumber, code));
+                    continue;
+                }
+
+                Role role = Role.STUDENT;
+                if (StringUtils.hasText(roleStr)) {
+                    try {
+                        role = Role.valueOf(roleStr.toUpperCase());
+                    } catch (IllegalArgumentException ignored) {
+                        role = Role.STUDENT;
+                    }
+                }
+
+                User newUser = User.builder()
+                        .code(StringUtils.hasText(code) ? code : null)
+                        .username(username)
+                        .fullName(StringUtils.hasText(fullName) ? fullName : username)
+                        .email(email)
+                        .phone(phone)
+                        .role(role)
+                        .status(UserStatus.ACTIVE)
+                        .password(passwordEncoder.encode("UniCheck@2024#Temp"))
+                        .faceDataStatus(FaceDataStatus.NOT_REGISTERED)
+                        .isPasswordChanged(false)
+                        .createdAt(LocalDateTime.now())
+                        .updatedAt(LocalDateTime.now())
+                        .build();
+
+                User savedUser = userRepository.save(newUser);
+
+                if (role == Role.STUDENT) {
+                    StudentProfile sp = StudentProfile.builder().user(savedUser).build();
+                    studentProfileRepository.save(sp);
+                } else if (role == Role.LECTURER) {
+                    LecturerProfile lp = LecturerProfile.builder().user(savedUser).build();
+                    lecturerProfileRepository.save(lp);
+                }
+
+                successCount++;
+            }
+        } catch (Exception e) {
+            log.error("Lỗi khi đọc file CSV import: {}", e.getMessage(), e);
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Không thể xử lý tệp CSV: " + e.getMessage());
+        }
+
+        User performer = getCurrentAuthenticatedUser();
+        systemLogService.logAudit(
+                "USER_IMPORT_CSV",
+                String.format("Import danh sách người dùng từ CSV: %d thành công, %d thất bại trên tổng số %d bản ghi",
+                        successCount, totalRecords - successCount, totalRecords),
+                performer,
+                null,
+                String.format("total=%d, success=%d, failed=%d", totalRecords, successCount, totalRecords - successCount),
+                httpRequest
+        );
+
+        return CsvImportResultResponse.builder()
+                .totalRecords(totalRecords)
+                .successCount(successCount)
+                .failedCount(totalRecords - successCount)
+                .errors(errors)
+                .build();
     }
 
     private User getCurrentAuthenticatedUser() {

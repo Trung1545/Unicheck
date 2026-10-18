@@ -30,6 +30,7 @@ public class UserUpdateRequest {
     private String sex;
     private String avatar;
     private Role role;
+    private com.unicheck.model.enums.UserStatus status;
 
     // Student profile info
     private String studentCourse;

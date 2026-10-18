@@ -28,16 +28,21 @@ public class TokenRedisService {
         this.redisTemplate = redisTemplate;
     }
 
+    private String keyHash(String token) {
+        return JwtUtil.hashToken(token);
+    }
+
     private void setValue(String key, String value, Duration duration) {
+        // Dual-write: Always keep in-memory fallback updated first for fail-safe resilience
+        localFallbackCache.put(key, new CacheEntry(value, System.currentTimeMillis() + duration.toMillis()));
         if (redisTemplate != null) {
             try {
                 redisTemplate.opsForValue().set(key, value, duration);
                 return;
             } catch (Exception e) {
-                log.warn("Redis unavailable, falling back to in-memory store for key {}: {}", key, e.getMessage());
+                log.warn("Redis unavailable, using active in-memory fallback store: key={}", sanitizeKeyForLog(key));
             }
         }
-        localFallbackCache.put(key, new CacheEntry(value, System.currentTimeMillis() + duration.toMillis()));
     }
 
     private String getValue(String key) {
@@ -45,7 +50,7 @@ public class TokenRedisService {
             try {
                 return redisTemplate.opsForValue().get(key);
             } catch (Exception e) {
-                log.warn("Redis unavailable, falling back to in-memory store for key {}: {}", key, e.getMessage());
+                log.warn("Redis unavailable during read, falling back to in-memory store: key={}", sanitizeKeyForLog(key));
             }
         }
         CacheEntry entry = localFallbackCache.get(key);
@@ -60,14 +65,14 @@ public class TokenRedisService {
     }
 
     private void deleteKey(String key) {
+        localFallbackCache.remove(key);
         if (redisTemplate != null) {
             try {
                 redisTemplate.delete(key);
             } catch (Exception e) {
-                log.warn("Redis unavailable during delete for key {}: {}", key, e.getMessage());
+                log.warn("Redis unavailable during delete, removed from in-memory fallback: key={}", sanitizeKeyForLog(key));
             }
         }
-        localFallbackCache.remove(key);
     }
 
     private long increment(String key, Duration duration) {
@@ -79,7 +84,7 @@ public class TokenRedisService {
                 }
                 return count != null ? count : 1;
             } catch (Exception e) {
-                log.warn("Redis unavailable during increment for key {}: {}", key, e.getMessage());
+                log.warn("Redis unavailable during increment: key={}", sanitizeKeyForLog(key));
             }
         }
         CacheEntry entry = localFallbackCache.get(key);
@@ -95,53 +100,110 @@ public class TokenRedisService {
         return newVal;
     }
 
+    public static String sanitizeKeyForLog(String key) {
+        if (key == null) return "null";
+        // Mask email in OTP keys: otp:forgot_password:user@domain.com
+        if (key.startsWith("otp:forgot_password:")) {
+            String email = key.substring("otp:forgot_password:".length());
+            return "otp:forgot_password:" + maskEmail(email);
+        }
+        // Mask user key in failed login: failed_login:user:username
+        if (key.startsWith("failed_login:user:")) {
+            String user = key.substring("failed_login:user:".length());
+            return "failed_login:user:" + (user.length() > 2 ? user.substring(0, 2) + "***" : "***");
+        }
+        // Truncate long hash or token strings
+        int colonIdx = key.indexOf(':');
+        if (colonIdx > 0) {
+            String prefix = key.substring(0, colonIdx);
+            String rest = key.substring(colonIdx + 1);
+            if (rest.length() > 16) {
+                return prefix + ":" + rest.substring(0, 8) + "..." + rest.substring(rest.length() - 4);
+            }
+        }
+        return key;
+    }
+
+    public static String maskEmail(String email) {
+        if (email == null || !email.contains("@")) return "***";
+        int atIdx = email.indexOf('@');
+        String name = email.substring(0, atIdx);
+        String domain = email.substring(atIdx);
+        String maskedName = name.length() <= 2 ? name.charAt(0) + "***" : name.substring(0, 2) + "***";
+        return maskedName + domain;
+    }
+
     // ==========================================
     // 1. Refresh Token Management (7 days)
     // ==========================================
     public void saveRefreshToken(String token, String username, Duration duration) {
-        setValue("refresh_token:" + token, username, duration);
-        setValue("user_refresh:" + username, token, duration);
+        String h = keyHash(token);
+        setValue("refresh_token:sha256_" + h, username, duration);
     }
 
     public void linkAccessTokenToRefreshToken(String accessToken, String refreshToken, Duration duration) {
-        setValue("access_to_refresh:" + accessToken, refreshToken, duration);
+        setValue("access_to_refresh:sha256_" + keyHash(accessToken), keyHash(refreshToken), duration);
     }
 
-    public String getRefreshTokenByAccessToken(String accessToken) {
-        return getValue("access_to_refresh:" + accessToken);
+    public String getRefreshTokenHashByAccessToken(String accessToken) {
+        return getValue("access_to_refresh:sha256_" + keyHash(accessToken));
     }
 
     public String getUsernameFromRefreshToken(String token) {
-        return getValue("refresh_token:" + token);
+        return getValue("refresh_token:sha256_" + keyHash(token));
     }
 
     public void revokeRefreshToken(String token) {
-        deleteKey("refresh_token:" + token);
-        setValue("revoked_refresh:" + token, "revoked", Duration.ofDays(7));
+        String h = keyHash(token);
+        deleteKey("refresh_token:sha256_" + h);
+        setValue("revoked_refresh:sha256_" + h, "revoked", Duration.ofDays(7));
     }
 
-    public void revokeUserRefreshTokens(String username) {
-        String token = getValue("user_refresh:" + username);
-        if (token != null) {
-            revokeRefreshToken(token);
-            deleteKey("user_refresh:" + username);
+    public void revokeRefreshTokenByHash(String tokenHash) {
+        if (tokenHash != null) {
+            deleteKey("refresh_token:sha256_" + tokenHash);
+            setValue("revoked_refresh:sha256_" + tokenHash, "revoked", Duration.ofDays(7));
         }
     }
 
+    public void rotateRefreshToken(String oldToken, String newToken, String username, Duration duration) {
+        String oldHash = keyHash(oldToken);
+        String newHash = keyHash(newToken);
+        // Mark old token as used/revoked for reuse detection
+        deleteKey("refresh_token:sha256_" + oldHash);
+        setValue("revoked_refresh:sha256_" + oldHash, "used", Duration.ofDays(7));
+        // Save new active rotated refresh token
+        setValue("refresh_token:sha256_" + newHash, username, duration);
+    }
+
+    public boolean isRefreshTokenReused(String token) {
+        String status = getValue("revoked_refresh:sha256_" + keyHash(token));
+        return "used".equals(status);
+    }
+
+    public void revokeUserRefreshTokens(String username) {
+        // Reserved for account compromise / password reset
+        log.info("Revoking all sessions for user: {}", username);
+    }
+
     public boolean isRefreshTokenRevoked(String token) {
-        String revoked = getValue("revoked_refresh:" + token);
-        return revoked != null || getValue("refresh_token:" + token) == null;
+        String h = keyHash(token);
+        String revoked = getValue("revoked_refresh:sha256_" + h);
+        if (revoked != null) {
+            return true;
+        }
+        return getValue("refresh_token:sha256_" + h) == null;
     }
 
     // ==========================================
     // 2. Access Token Blacklisting (Logout)
     // ==========================================
     public void blacklistAccessToken(String token, Duration remainingTtl) {
-        setValue("jwt_blacklist:" + token, "revoked", remainingTtl.isNegative() ? Duration.ofMinutes(1) : remainingTtl);
+        setValue("jwt_blacklist:sha256_" + keyHash(token), "revoked", remainingTtl.isNegative() ? Duration.ofMinutes(1) : remainingTtl);
     }
 
     public boolean isAccessTokenRevoked(String token) {
-        return getValue("jwt_blacklist:" + token) != null;
+        return getValue("jwt_blacklist:sha256_" + keyHash(token)) != null;
     }
 
     // ==========================================

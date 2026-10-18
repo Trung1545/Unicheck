@@ -412,4 +412,150 @@ class AuthenticationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message", containsString("Đổi mật khẩu thành công")));
     }
+
+    // =========================================================================
+    // 8. TASK P02: Kiểm tra bảo mật JWT, Phân tách Access/Refresh và Session
+    // =========================================================================
+
+    @Test
+    @DisplayName("P02-1: Refresh Token gửi trong Authorization Bearer bị từ chối truy cập /me (401 Unauthorized)")
+    void testRefreshTokenCannotAccessProtectedEndpoint() throws Exception {
+        LoginRequest loginRequest = LoginRequest.builder()
+                .username(studentUser.getUsername())
+                .password("Student@123")
+                .build();
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String responseBody = loginResult.getResponse().getContentAsString();
+        String accessToken = objectMapper.readTree(responseBody).get("data").get("token").asText();
+        String refreshToken = objectMapper.readTree(responseBody).get("data").get("refreshToken").asText();
+
+        // 8a. Access token hợp lệ truy cập /me thành công (200 OK)
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.username", is(studentUser.getUsername())));
+
+        // 8b. Refresh token cố tình gửi vào Authorization Bearer ở /me -> Bị từ chối 401 Unauthorized
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + refreshToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.errorCode", is("ERR_2000")));
+    }
+
+    @Test
+    @DisplayName("P02-2: Xoay vòng Refresh Token (Rotation) và Chặn tái sử dụng token cũ (Reuse Detection)")
+    void testRefreshTokenRotationAndReuseDetection() throws Exception {
+        LoginRequest loginRequest = LoginRequest.builder()
+                .username(studentUser.getUsername())
+                .password("Student@123")
+                .build();
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String responseBody = loginResult.getResponse().getContentAsString();
+        String initialRefreshToken = objectMapper.readTree(responseBody).get("data").get("refreshToken").asText();
+
+        // Lần 1: Dùng initialRefreshToken đổi lấy cặp mới
+        RefreshTokenRequest refreshReq1 = RefreshTokenRequest.builder()
+                .refreshToken(initialRefreshToken)
+                .build();
+
+        MvcResult refreshResult1 = mockMvc.perform(post("/api/auth/refresh-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshReq1)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.token", notNullValue()))
+                .andExpect(jsonPath("$.data.refreshToken", notNullValue()))
+                .andReturn();
+
+        String refreshBody1 = refreshResult1.getResponse().getContentAsString();
+        String newAccessToken = objectMapper.readTree(refreshBody1).get("data").get("token").asText();
+        String rotatedRefreshToken = objectMapper.readTree(refreshBody1).get("data").get("refreshToken").asText();
+
+        // Xác nhận token mới khác token cũ (Rotation)
+        org.junit.jupiter.api.Assertions.assertNotEquals(initialRefreshToken, rotatedRefreshToken,
+                "Rotated refresh token must be different from initial refresh token");
+
+        // New access token hoạt động bình thường
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + newAccessToken))
+                .andExpect(status().isOk());
+
+        // Lần 2: Thử tái sử dụng initialRefreshToken đã qua sử dụng -> Phải bị từ chối 401 (Reuse Detection)
+        mockMvc.perform(post("/api/auth/refresh-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshReq1)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode", is("ERR_2010")));
+
+        // Lần 3: Dùng rotatedRefreshToken mới -> Thành công tiếp tục xoay vòng
+        RefreshTokenRequest refreshReq2 = RefreshTokenRequest.builder()
+                .refreshToken(rotatedRefreshToken)
+                .build();
+
+        mockMvc.perform(post("/api/auth/refresh-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshReq2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.token", notNullValue()));
+    }
+
+    @Test
+    @DisplayName("P02-3: Đa thiết bị (Multi-Device) – Logout trên Thiết bị 1 không làm mất phiên Thiết bị 2")
+    void testMultiDeviceSessionIsolation() throws Exception {
+        LoginRequest loginRequest = LoginRequest.builder()
+                .username(studentUser.getUsername())
+                .password("Student@123")
+                .build();
+
+        // Thiết bị 1 (Mobile) đăng nhập
+        MvcResult dev1Result = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("User-Agent", "UniCheck-Flutter-Mobile/1.0.0")
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String dev1Token = objectMapper.readTree(dev1Result.getResponse().getContentAsString()).get("data").get("token").asText();
+
+        // Thiết bị 2 (Web Browser) đăng nhập
+        MvcResult dev2Result = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0")
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String dev2Token = objectMapper.readTree(dev2Result.getResponse().getContentAsString()).get("data").get("token").asText();
+
+        // Cả 2 thiết bị đều truy cập được /me
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + dev1Token)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + dev2Token)).andExpect(status().isOk());
+
+        // Thiết bị 1 thực hiện logout
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("Authorization", "Bearer " + dev1Token))
+                .andExpect(status().isOk());
+
+        // Thiết bị 1 bị chặn (401)
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + dev1Token))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode", is("ERR_2010")));
+
+        // Thiết bị 2 VẪN HOẠT ĐỘNG BÌNH THƯỜNG (200 OK)
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + dev2Token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.username", is(studentUser.getUsername())));
+    }
 }
