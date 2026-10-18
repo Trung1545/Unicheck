@@ -1,0 +1,3303 @@
+openapi: 3.0.3
+info:
+  title: UniCheck Authentication & User Management API
+  description: |
+    Official frozen API contract for UniCheck Smart Attendance System.
+    This contract serves as the Single Source of Truth (SSOT) for the Flutter mobile client (`mobile/`),
+    desktop/web Flutter builds, and third-party integrations.
+
+    ### Routing Policy:
+    - **Canonical Route Prefix:** `/api/v1/...` (Target standard for all new Flutter clients)
+    - **Backward-Compatible Alias:** `/api/...` (Legacy dual-mapped endpoints, guaranteed identical behavior)
+
+    ### Authentication Architecture:
+    - JWT Access Token: Stateless HS256, lifetime 15 minutes (900s), bearer in `Authorization: Bearer <token>`.
+    - Refresh Token: Tracked in Redis/fallback cache, lifetime 7 days (604,800s), rotatable with reuse detection.
+    - Flat Login Response: `LoginResponse` returns user claims directly at root of `data`. It does NOT nest within `data.user`.
+  version: 1.0.0
+  contact:
+    name: UniCheck Engineering Team
+    email: dev@unicheck.edu.vn
+
+servers:
+  - url: http://localhost:8080
+    description: Local Spring Boot Development Server
+  - url: https://api.unicheck.edu.vn
+    description: Production Environment (Future Staging/Prod)
+
+tags:
+  - name: Authentication (Canonical /api/v1/auth)
+    description: Canonical user login, logout, refresh token, and self-service profile management
+  - name: Authentication (Legacy Alias /api/auth)
+    description: Dual-mapped alias endpoints preserved for backward compatibility
+  - name: User Management (Canonical /api/v1/users)
+    description: Administrator user CRUD, status filtering, and pagination
+  - name: User Management (Legacy Alias /api/users)
+    description: Dual-mapped alias endpoints for user management
+  - name: Facility Management (Canonical /api/v1/facilities)
+    description: Classrooms, Wi-Fi Access Points, and Room-Wi-Fi associations (F-13)
+  - name: Timetable Management (Canonical /api/v1/timetable)
+    description: Class schedule slots, conflict checking, slot types, and personal timetables (F-16)
+  - name: AI Face Recognition (Canonical /api/v1/face)
+    description: ArcFace feature extraction, face detection, identity verification, and liveness contracts (F-18, F-19, F-20)
+
+paths:
+  # =========================================================================
+  # CANONICAL AUTHENTICATION ENDPOINTS (/api/v1/auth)
+  # =========================================================================
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: User Login (Canonical)
+      description: |
+        Authenticates a user via username and password. On success, issues a flat `LoginResponse`
+        containing an Access Token (15m) and a Refresh Token (7d).
+        Subject to rate limiting: maximum 5 consecutive failed attempts per username within 15 minutes.
+      operationId: loginCanonical
+      parameters:
+        - name: X-Device-Id
+          in: header
+          required: false
+          description: Client device unique identifier for multi-device session tracking
+          schema:
+            type: string
+            example: "pixel7-android-uuid-12345"
+        - name: User-Agent
+          in: header
+          required: false
+          description: Client platform User-Agent string
+          schema:
+            type: string
+            example: "UniCheck-Flutter/1.0.0 (Android 14; Pixel 7)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginApiResponse'
+              example:
+                success: true
+                data:
+                  token: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdHVkZW50XzAxIiwiZXhwIjoxNzg5MDAwMDB9..."
+                  refreshToken: "6b2a0c4f-9e7d-41a2-8e1f-d748f2a1b9c3"
+                  tokenType: "Bearer"
+                  expiresIn: 900
+                  userId: 101
+                  code: "SV20260001"
+                  username: "student_01"
+                  fullName: "Nguyễn Văn Sinh Viên"
+                  email: "student01@unicheck.edu.vn"
+                  role: "STUDENT"
+                  isPasswordChanged: true
+                message: "Đăng nhập thành công"
+                errorCode: null
+        '400':
+          description: Dữ liệu gửi lên không hợp lệ (ERR_1001)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+              example:
+                success: false
+                data:
+                  username: "Tên đăng nhập không được để trống"
+                message: "Dữ liệu gửi lên không hợp lệ"
+                errorCode: "ERR_1001"
+        '401':
+          description: Tên đăng nhập hoặc mật khẩu không chính xác (ERR_2002)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+              example:
+                success: false
+                data: null
+                message: "Tên đăng nhập hoặc mật khẩu không chính xác"
+                errorCode: "ERR_2002"
+        '429':
+          description: Vượt quá số lần thử đăng nhập (ERR_2007)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+              example:
+                success: false
+                data: null
+                message: "Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 15 phút"
+                errorCode: "ERR_2007"
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: User Logout (Canonical)
+      description: |
+        Revokes the current access token and session in Redis / fallback cache.
+        Does NOT invalidate sessions on other devices unless explicitly required.
+      operationId: logoutCanonical
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Đăng xuất thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+              example:
+                success: true
+                data: null
+                message: "Đăng xuất thành công"
+                errorCode: null
+
+  /api/v1/auth/refresh-token:
+    post:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Refresh Access Token (Canonical)
+      description: |
+        Exchanges a valid Refresh Token for a new Access Token.
+        Enforces Refresh Token Rotation (RTR): once used, the old refresh token is revoked
+        and replaced with a newly issued refresh token. Reuse detection immediately revokes all family sessions.
+      operationId: refreshTokenCanonical
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Làm mới mã xác thực thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefreshApiResponse'
+              example:
+                success: true
+                data:
+                  token: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdHVkZW50XzAxIiwiZXhwIjoxNzg5ODY0MDB9..."
+                  refreshToken: "a1c2d3e4-f5a6-7b8c-9d0e-1f2a3b4c5d6e"
+                  tokenType: "Bearer"
+                  expiresIn: 900
+                message: "Làm mới mã xác thực thành công"
+                errorCode: null
+        '401':
+          description: Mã xác thực không hợp lệ hoặc đã bị thu hồi (ERR_2006 / ERR_2010)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/auth/me:
+    get:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Get Current User Profile (Canonical /me)
+      description: |
+        Retrieves full profile details of the authenticated caller.
+        Rejects Refresh Tokens with 401 Unauthorized (`type=access` required).
+      operationId: getCurrentUserProfileCanonical
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Lấy thông tin hồ sơ thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileApiResponse'
+        '401':
+          description: Chưa xác thực hoặc token hết hạn (ERR_2000 / ERR_2005)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/auth/profile:
+    get:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Get Current User Profile (Canonical /profile)
+      description: Alias path to `/api/v1/auth/me`. Returns identical payload.
+      operationId: getProfileCanonical
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Lấy thông tin hồ sơ thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileApiResponse'
+    put:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Update Current User Profile (Canonical)
+      description: Updates basic demographic info (fullName, phone, dob, sex, avatar) for the authenticated user.
+      operationId: updateProfileCanonical
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Cập nhật hồ sơ thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileApiResponse'
+
+  /api/v1/auth/change-password:
+    post:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Change Password (Canonical)
+      description: Allows authenticated user to update password upon supplying correct old password.
+      operationId: changePasswordCanonical
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Đổi mật khẩu thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+        '400':
+          description: Mật khẩu hiện tại không chính xác (ERR_2009)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/auth/forgot-password:
+    post:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Request Password Reset OTP (Canonical)
+      description: |
+        Generates a 6-digit OTP sent via email (masked in server logs as `[******]`).
+        Always returns generic 200 message to prevent user enumeration attacks.
+      operationId: forgotPasswordCanonical
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Generic confirmation message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+              example:
+                success: true
+                data: null
+                message: "Nếu email tồn tại trong hệ thống, mã xác thực 6 chữ số đã được gửi qua email"
+                errorCode: null
+
+  /api/v1/auth/reset-password:
+    post:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Reset Password with OTP (Canonical)
+      description: Verifies 6-digit OTP and applies the new password.
+      operationId: resetPasswordCanonical
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Đặt lại mật khẩu thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+        '400':
+          description: Mã xác thực không chính xác hoặc đã hết hạn (ERR_2008)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/auth/test/admin:
+    get:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Verify ADMIN Role Access (Canonical)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Quyền truy cập hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StringApiResponse'
+        '403':
+          description: Quyền hạn không hợp lệ (ERR_2001)
+
+  /api/v1/auth/test/lecturer:
+    get:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Verify LECTURER Role Access (Canonical)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Quyền truy cập hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StringApiResponse'
+
+  /api/v1/auth/test/student:
+    get:
+      tags:
+        - Authentication (Canonical /api/v1/auth)
+      summary: Verify STUDENT Role Access (Canonical)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Quyền truy cập hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StringApiResponse'
+
+  # =========================================================================
+  # LEGACY ALIAS AUTHENTICATION ENDPOINTS (/api/auth)
+  # =========================================================================
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: User Login (Legacy Alias)
+      description: Dual-mapped alias to `/api/v1/auth/login`. Returns identical schema.
+      parameters:
+        - name: X-Device-Id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginApiResponse'
+
+  /api/auth/logout:
+    post:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: User Logout (Legacy Alias)
+      description: Dual-mapped alias to `/api/v1/auth/logout`.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  /api/auth/refresh-token:
+    post:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Refresh Access Token (Legacy Alias)
+      description: Dual-mapped alias to `/api/v1/auth/refresh-token`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefreshApiResponse'
+
+  /api/auth/me:
+    get:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Get Current User Profile (Legacy Alias /me)
+      description: Dual-mapped alias to `/api/v1/auth/me`.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileApiResponse'
+
+  /api/auth/profile:
+    get:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Get Current User Profile (Legacy Alias /profile)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileApiResponse'
+    put:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Update Current User Profile (Legacy Alias)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileApiResponse'
+
+  /api/auth/change-password:
+    post:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Change Password (Legacy Alias)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  /api/auth/forgot-password:
+    post:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Request Password Reset OTP (Legacy Alias)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  /api/auth/reset-password:
+    post:
+      tags:
+        - Authentication (Legacy Alias /api/auth)
+      summary: Reset Password with OTP (Legacy Alias)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  # =========================================================================
+  # CANONICAL USER MANAGEMENT ENDPOINTS (/api/v1/users)
+  # =========================================================================
+  /api/v1/users:
+    get:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: List Users with Pagination and Filtering (Canonical)
+      description: Requires ADMIN role. Supports keyword search across code, username, fullName, email.
+      operationId: getAllUsersCanonical
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Search keyword
+        - name: role
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Role'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "createdAt,desc"
+      responses:
+        '200':
+          description: Lấy danh sách người dùng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPageApiResponse'
+        '403':
+          description: Yêu cầu quyền ADMIN (ERR_2001)
+
+    post:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: Create New User (Canonical)
+      description: Requires ADMIN role. Generates default password or sets initial status.
+      operationId: createUserCanonical
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreateRequest'
+      responses:
+        '201':
+          description: Tạo tài khoản người dùng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiResponse'
+        '400':
+          description: Dữ liệu không hợp lệ hoặc đã tồn tại (ERR_1001 / ERR_2011)
+
+  /api/v1/users/{id}:
+    get:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: Get User Details by ID (Canonical)
+      description: Requires ADMIN role.
+      operationId: getUserByIdCanonical
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Lấy thông tin người dùng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiResponse'
+        '404':
+          description: Không tìm thấy tài nguyên yêu cầu (ERR_1002)
+
+    put:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: Update User by ID (Canonical)
+      description: Requires ADMIN role. Logs audit event.
+      operationId: updateUserByIdCanonical
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: Cập nhật thông tin người dùng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiResponse'
+
+    delete:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: Delete User by ID (Canonical)
+      description: Requires ADMIN role.
+      operationId: deleteUserByIdCanonical
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Xóa tài khoản người dùng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  /api/v1/users/active:
+    get:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: List Active Users (Canonical)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPageApiResponse'
+
+  /api/v1/users/inactive:
+    get:
+      tags:
+        - User Management (Canonical /api/v1/users)
+      summary: List Inactive Users (Canonical)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPageApiResponse'
+
+  # =========================================================================
+  # LEGACY ALIAS USER MANAGEMENT ENDPOINTS (/api/users)
+  # =========================================================================
+  /api/users:
+    get:
+      tags:
+        - User Management (Legacy Alias /api/users)
+      summary: List Users (Legacy Alias)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/Role'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPageApiResponse'
+    post:
+      tags:
+        - User Management (Legacy Alias /api/users)
+      summary: Create New User (Legacy Alias)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreateRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiResponse'
+
+  /api/users/{id}:
+    get:
+      tags:
+        - User Management (Legacy Alias /api/users)
+      summary: Get User by ID (Legacy Alias)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiResponse'
+    put:
+      tags:
+        - User Management (Legacy Alias /api/users)
+      summary: Update User by ID (Legacy Alias)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiResponse'
+    delete:
+      tags:
+        - User Management (Legacy Alias /api/users)
+      summary: Delete User by ID (Legacy Alias)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  # =========================================================================
+  # FACILITY MANAGEMENT ENDPOINTS (/api/v1/facilities) - TASK-02C (F-13)
+  # =========================================================================
+  /api/v1/facilities/rooms:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy danh sách phòng học có phân trang, tìm kiếm và lọc
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: building
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RoomType'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RoomStatus'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Danh sách phòng học
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomPageApiResponse'
+    post:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Tạo mới phòng học (ADMIN only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomCreateRequest'
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomResponseApiResponse'
+        '409':
+          description: Trùng mã phòng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/facilities/rooms/{id}:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy chi tiết phòng học kèm danh sách AP đã gán
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomDetailApiResponse'
+    put:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Cập nhật thông tin phòng học (ADMIN only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomResponseApiResponse'
+    delete:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Xóa phòng học (ADMIN only, chặn nếu đang có lịch học)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+        '409':
+          description: Phòng học đang được sử dụng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/facilities/rooms/check-code:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Kiểm tra tính khả dụng của mã phòng học
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableCheckApiResponse'
+
+  /api/v1/facilities/rooms/buildings:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy danh sách tên tòa nhà
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildingListApiResponse'
+
+  /api/v1/facilities/rooms/stats:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy thống kê cơ sở vật chất (KPI cards)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacilityStatsApiResponse'
+
+  /api/v1/facilities/wifi-ap:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy danh sách Wi-Fi AP có phân trang, tìm kiếm và lọc
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WifiApStatus'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiAccessPointPageApiResponse'
+    post:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Tạo mới Wi-Fi AP (ADMIN only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WifiAccessPointCreateRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiAccessPointApiResponse'
+        '409':
+          description: Trùng BSSID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/facilities/wifi-ap/{id}:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy thông tin Wi-Fi AP theo ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiAccessPointApiResponse'
+    put:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Cập nhật Wi-Fi AP (ADMIN only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WifiAccessPointUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiAccessPointApiResponse'
+    delete:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Xóa Wi-Fi AP (ADMIN only, chặn nếu đang gán phòng)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+        '409':
+          description: AP đang gán vào phòng học
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/facilities/wifi-ap/check-bssid:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Kiểm tra tính khả dụng của BSSID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: bssid
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableCheckApiResponse'
+
+  /api/v1/facilities/rooms/{id}/wifi-ap:
+    get:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Lấy danh sách Wi-Fi AP được gán cho một phòng
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomWifiAccessPointListApiResponse'
+    post:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Gán Wi-Fi AP vào phòng học (ADMIN only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignWifiApRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomWifiAccessPointApiResponse'
+        '409':
+          description: AP đã được gán vào phòng này
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/facilities/rooms/{id}/wifi-ap/{accessPointId}:
+    delete:
+      tags:
+        - Facility Management (Canonical /api/v1/facilities)
+      summary: Hủy liên kết Wi-Fi AP khỏi phòng học (ADMIN only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: accessPointId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+
+  # =========================================================================
+  # TIMETABLE & SCHEDULING ENDPOINTS (/api/v1/timetable)
+  # =========================================================================
+  /api/v1/timetable/slots:
+    get:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Lấy danh sách ca học (hỗ trợ lọc theo học kỳ, lớp, phòng, giảng viên, ngày)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: semesterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: classSectionId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: roomId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: lecturerId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/TimetableSlotStatus'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotPageApiResponse'
+    post:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Tạo mới ca học gắn với lớp học phần (ADMIN only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimetableSlotCreateRequest'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotApiResponse'
+        '409':
+          description: Xung đột lịch phòng, giảng viên, lớp học phần hoặc ngày nghỉ lễ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/timetable/slots/{id}:
+    get:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Lấy thông tin chi tiết ca học
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotApiResponse'
+        '404':
+          description: Không tìm thấy ca học
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+    put:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Cập nhật thông tin ca học (ADMIN only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimetableSlotUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotApiResponse'
+        '409':
+          description: Xung đột lịch hoặc ca học đã có dữ liệu điểm danh
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+    delete:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Xóa ca học (ADMIN only, chặn nếu đã có phiên điểm danh)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoidApiResponse'
+        '409':
+          description: Ca học đã có phiên điểm danh không thể xóa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/timetable/me:
+    get:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Lấy thời khóa biểu cá nhân của Giảng viên (lịch dạy) hoặc Sinh viên (lớp đã ghi danh)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotListApiResponse'
+
+  /api/v1/timetable/slot-types:
+    get:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Lấy danh mục các loại tiết/ca học
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotTypeListApiResponse'
+
+  /api/v1/timetable/slots/check-conflict:
+    post:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Kiểm tra trước xung đột phòng, giảng viên, lớp học realtime
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimetableConflictCheckRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableConflictCheckApiResponse'
+
+  /api/v1/timetable/stats:
+    get:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Lấy số liệu thống kê thời khóa biểu KPI Bento
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: semesterId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableStatsApiResponse'
+
+  /api/v1/timetable/slots/{id}/cancel:
+    put:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Hủy ca học (chuyển sang trạng thái CANCELLED)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotApiResponse'
+
+  /api/v1/timetable/slots/{id}/reschedule:
+    put:
+      tags:
+        - Timetable Management (Canonical /api/v1/timetable)
+      summary: Dời lịch ca học sang ngày, phòng, tiết học mới
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimetableSlotUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimetableSlotApiResponse'
+
+  # =========================================================================
+  # AI MICROSERVICE ENDPOINTS (/api/v1/face & /health)
+  # =========================================================================
+  /health:
+    get:
+      tags:
+        - AI Face Recognition (Canonical /api/v1/face)
+      summary: Kiểm tra trạng thái AI Microservice và sự sẵn sàng của mô hình ArcFace & YuNet
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: "UP"
+                      service:
+                        type: string
+                        example: "UniCheck AI Microservice"
+                      version:
+                        type: string
+                        example: "1.0.0"
+                      model_ready:
+                        type: boolean
+                        example: true
+                      detector_ready:
+                        type: boolean
+                        example: true
+                      model_name:
+                        type: string
+                        example: "ArcFace-MobileFaceNet"
+                      model_version:
+                        type: string
+                        example: "w600k_mbf_v1"
+                      embedding_dimension:
+                        type: integer
+                        example: 512
+                      detector_name:
+                        type: string
+                        example: "YuNet-2023mar"
+                  message:
+                    type: string
+                    example: "AI Service is healthy and models are ready"
+                  errorCode:
+                    type: string
+                    nullable: true
+                    example: null
+
+  /api/v1/face/extract-embedding:
+    post:
+      tags:
+        - AI Face Recognition (Canonical /api/v1/face)
+      summary: Trích xuất vector đặc trưng khuôn mặt 512 chiều chuẩn hóa L2 từ ảnh Base64
+      description: |
+        Thực hiện pipeline 5 bước: Giải mã Base64 -> Phát hiện khuôn mặt YuNet (yêu cầu duy nhất 1 mặt) ->
+        Căn chỉnh Affine 5 điểm mốc chuẩn 112x112 -> Trích xuất đặc trưng ArcFace MobileFaceNet ONNX ->
+        Chuẩn hóa L2 về mặt cầu đơn vị.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - image_base64
+              properties:
+                image_base64:
+                  type: string
+                  description: Chuỗi ảnh mã hóa Base64 (hỗ trợ kèm Data URL prefix)
+      responses:
+        '200':
+          description: Trích xuất đặc trưng khuôn mặt thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      embedding:
+                        type: array
+                        items:
+                          type: number
+                          format: float
+                        description: Vector đặc trưng 512 phần tử chuẩn hóa L2
+                      embedding_dimension:
+                        type: integer
+                        example: 512
+                      model_name:
+                        type: string
+                        example: "ArcFace-MobileFaceNet"
+                      model_version:
+                        type: string
+                        example: "w600k_mbf_v1"
+                      face_detected:
+                        type: boolean
+                        example: true
+                      confidence:
+                        type: number
+                        format: float
+                        example: 0.9854
+                      bounding_box:
+                        type: object
+                        properties:
+                          x:
+                            type: integer
+                          y:
+                            type: integer
+                          width:
+                            type: integer
+                          height:
+                            type: integer
+                      quality:
+                        type: object
+                        properties:
+                          face_width:
+                            type: integer
+                          face_height:
+                            type: integer
+                  message:
+                    type: string
+                    example: "Trích xuất đặc trưng khuôn mặt thành công"
+                  errorCode:
+                    type: string
+                    nullable: true
+                    example: null
+        '400':
+          description: Không tìm thấy mặt (ERR_3001), nhiều hơn 1 mặt (ERR_3002) hoặc ảnh hỏng (ERR_1001)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+
+  /api/v1/face/verify-face:
+    post:
+      tags:
+        - AI Face Recognition (Canonical /api/v1/face)
+      summary: So khớp danh tính khuôn mặt bằng Cosine Similarity
+      description: |
+        Chấp nhận hai vector đặc trưng 512 chiều hoặc hai ảnh Base64 để trích xuất và đối sánh trực tiếp.
+        Độ tương đồng Cosine được so sánh với ngưỡng quyết định threshold (mặc định 0.68).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_embedding:
+                  type: array
+                  items:
+                    type: number
+                    format: float
+                target_embedding:
+                  type: array
+                  items:
+                    type: number
+                    format: float
+                source_image_base64:
+                  type: string
+                target_image_base64:
+                  type: string
+                threshold:
+                  type: number
+                  format: float
+                  default: 0.68
+                  example: 0.68
+                metric:
+                  type: string
+                  enum: [cosine, euclidean]
+                  default: cosine
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      matched:
+                        type: boolean
+                        example: true
+                      similarity_score:
+                        type: number
+                        format: float
+                        example: 0.8842
+                      threshold:
+                        type: number
+                        format: float
+                        example: 0.68
+                      metric:
+                        type: string
+                        example: "cosine"
+                      euclidean_distance:
+                        type: number
+                        format: float
+                        example: 0.4812
+                      model_name:
+                        type: string
+                        example: "ArcFace-MobileFaceNet"
+                      model_version:
+                        type: string
+                        example: "w600k_mbf_v1"
+                  message:
+                    type: string
+                    example: "Xác thực so khớp khuôn mặt thành công"
+                  errorCode:
+                    type: string
+                    nullable: true
+                    example: null
+
+  /api/v1/face/check-liveness:
+    post:
+      tags:
+        - AI Face Recognition (Canonical /api/v1/face)
+      summary: Kiểm tra thực thể sống chống giả mạo khuôn mặt (Fail-Closed Contract)
+      description: |
+        Cơ chế Fail-Closed: Tính năng kiểm tra thực thể (Liveness Anti-Spoofing) chưa triển khai model MiniFASNet
+        trong TASK-03 (dự kiến TASK-07). Endpoint từ chối với HTTP 501 UNAVAILABLE để ngăn chặn bypass gian lận.
+      responses:
+        '501':
+          description: Anti-spoofing engine chưa được kích hoạt (Fail-Closed an toàn)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  data:
+                    type: object
+                    properties:
+                      is_live:
+                        type: boolean
+                        example: false
+                      status:
+                        type: string
+                        example: "UNAVAILABLE"
+                      reason:
+                        type: string
+                        example: "Liveness Anti-Spoofing engine is in development (Scheduled for TASK-07)"
+                      fail_closed:
+                        type: boolean
+                        example: true
+                  message:
+                    type: string
+                    example: "Tính năng kiểm tra thực thể sống (Liveness Anti-Spoofing) chưa được kích hoạt trong phiên bản này"
+                  errorCode:
+                    type: string
+                    example: "ERR_3003"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Authenticate by prefixing the JWT access token with "Bearer " in the Authorization header.
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # ENUMS
+    # -----------------------------------------------------------------------
+    Role:
+      type: string
+      enum:
+        - ADMIN
+        - LECTURER
+        - STUDENT
+      example: STUDENT
+
+    UserStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - INACTIVE
+        - BLOCKED
+      example: ACTIVE
+
+    FaceDataStatus:
+      type: string
+      enum:
+        - NOT_REGISTERED
+        - ACTIVE
+        - BLOCKED
+      example: ACTIVE
+
+    ErrorCode:
+      type: string
+      enum:
+        # System (1000-1099)
+        - ERR_1000 # Lỗi hệ thống máy chủ nội bộ
+        - ERR_1001 # Dữ liệu yêu cầu không hợp lệ
+        - ERR_1002 # Không tìm thấy tài nguyên yêu cầu
+        - ERR_1003 # Phương thức HTTP không được hỗ trợ
+        # Auth & Security (2000-2099)
+        - ERR_2000 # Yêu cầu đăng nhập hoặc phiên làm việc đã hết hạn
+        - ERR_2001 # Bạn không có quyền truy cập chức năng này
+        - ERR_2002 # Tên đăng nhập hoặc mật khẩu không chính xác
+        - ERR_2003 # Tài khoản hiện đang bị khóa
+        - ERR_2004 # Tài khoản chưa được kích hoạt
+        - ERR_2005 # Mã xác thực JWT đã hết hạn
+        - ERR_2006 # Mã xác thực JWT không hợp lệ
+        - ERR_2007 # Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 15 phút
+        - ERR_2008 # Mã xác thực không chính xác hoặc đã hết hạn
+        - ERR_2009 # Mật khẩu hiện tại không chính xác
+        - ERR_2010 # Phiên đăng nhập đã bị thu hồi
+        - ERR_2011 # Tên đăng nhập, email hoặc mã định danh đã tồn tại trong hệ thống
+        # Face & Attendance (3000-3099)
+        - ERR_3001 # Không phát hiện khuôn mặt trong ảnh
+        - ERR_3002 # Phát hiện nhiều hơn một khuôn mặt
+        - ERR_3003 # Kiểm tra thực thể (liveness) thất bại
+        - ERR_3004 # Khuôn mặt không khớp với hồ sơ đã đăng ký
+        - ERR_3005 # Sinh viên chưa đăng ký dữ liệu khuôn mặt
+        - ERR_3006 # Ca điểm danh đã kết thúc hoặc chưa mở
+        - ERR_3007 # Bạn đã điểm danh thành công cho ca học này
+        - ERR_3008 # Vị trí Wi-Fi không khớp với phòng học quy định
+        # Academic (4000-4099)
+        - ERR_4001 # Dữ liệu đã tồn tại trong hệ thống
+        - ERR_4002 # Lớp học đã đạt số lượng tối đa
+        # Facilities & Wi-Fi Access Points (5000-5099)
+        - ERR_5001 # Không tìm thấy phòng học
+        - ERR_5002 # Mã phòng học đã tồn tại
+        - ERR_5003 # Địa chỉ BSSID của Wi-Fi AP đã tồn tại
+        - ERR_5004 # Wi-Fi Access Point đã được gán vào phòng học này
+        - ERR_5005 # Không tìm thấy liên kết giữa phòng học và Wi-Fi AP
+        - ERR_5006 # Không tìm thấy Wi-Fi Access Point
+        - ERR_5007 # Không thể xóa phòng học đang được sử dụng trong lịch học hoặc ca điểm danh
+        - ERR_5008 # Không thể xóa Wi-Fi Access Point đang được liên kết với phòng học
+        # Timetable & Scheduling (6000-6099)
+        - ERR_6001 # Không tìm thấy ca học
+        - ERR_6002 # Không tìm thấy loại tiết học
+        - ERR_6003 # Trùng phòng học: Phòng đã được xếp lịch cho lớp khác trong cùng ca học
+        - ERR_6004 # Trùng lịch giảng viên: Giảng viên đã có lịch giảng dạy trong cùng ca học
+        - ERR_6005 # Trùng lịch lớp học: Lớp học phần đã có lịch học trong cùng ca học
+        - ERR_6006 # Ngày học không thuộc khoảng thời gian của học kỳ
+        - ERR_6007 # Ngày học trùng với ngày nghỉ lễ theo lịch của trường
+        - ERR_6008 # Phòng học đang bảo trì hoặc không khả dụng
+        - ERR_6009 # Sức chứa của phòng học nhỏ hơn sĩ số của lớp
+        - ERR_6010 # Không thể thay đổi hoặc xóa lịch học đã có phiên điểm danh
+        - ERR_6011 # Số tiết học hoặc khoảng ca học không hợp lệ
+
+    RoomType:
+      type: string
+      enum:
+        - THEORY
+        - LAB
+        - AUDITORIUM
+        - MEETING
+        - OTHER
+      example: THEORY
+
+    RoomStatus:
+      type: string
+      enum:
+        - AVAILABLE
+        - OCCUPIED
+        - MAINTENANCE
+        - INACTIVE
+      example: AVAILABLE
+
+    WifiApStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - INACTIVE
+        - MAINTENANCE
+      example: ACTIVE
+
+    TimetableSlotStatus:
+      type: string
+      enum:
+        - SCHEDULED
+        - COMPLETED
+        - CANCELLED
+        - RESCHEDULED
+      example: SCHEDULED
+
+    # -----------------------------------------------------------------------
+    # REQUEST MODELS
+    # -----------------------------------------------------------------------
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: "student_01"
+          description: Tên đăng nhập
+        password:
+          type: string
+          format: password
+          example: "Student@123"
+          description: Mật khẩu người dùng
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          example: "6b2a0c4f-9e7d-41a2-8e1f-d748f2a1b9c3"
+          description: Refresh token đã cấp trước đó
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - oldPassword
+        - newPassword
+      properties:
+        oldPassword:
+          type: string
+          format: password
+          example: "OldPassword123"
+        newPassword:
+          type: string
+          format: password
+          minLength: 6
+          example: "NewPassword456"
+
+    ForgotPasswordRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: "student01@unicheck.edu.vn"
+
+    ResetPasswordRequest:
+      type: object
+      required:
+        - email
+        - otp
+        - newPassword
+      properties:
+        email:
+          type: string
+          format: email
+          example: "student01@unicheck.edu.vn"
+        otp:
+          type: string
+          example: "123456"
+          description: 6-digit numeric verification OTP
+        newPassword:
+          type: string
+          format: password
+          minLength: 6
+          example: "NewSecretPassword789"
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          example: "Nguyễn Văn Sinh Viên"
+        phone:
+          type: string
+          example: "0901234567"
+        dob:
+          type: string
+          format: date
+          example: "2003-05-15"
+        sex:
+          type: string
+          example: "NAM"
+        avatar:
+          type: string
+          example: "https://storage.unicheck.edu.vn/avatars/user_101.jpg"
+
+    UserCreateRequest:
+      type: object
+      required:
+        - username
+        - fullName
+        - email
+        - role
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          example: "student_new"
+        fullName:
+          type: string
+          maxLength: 150
+          example: "Trần Minh Quang"
+        email:
+          type: string
+          format: email
+          example: "quangtm@unicheck.edu.vn"
+        code:
+          type: string
+          maxLength: 50
+          example: "SV20260099"
+        role:
+          $ref: '#/components/schemas/Role'
+          default: STUDENT
+        status:
+          $ref: '#/components/schemas/UserStatus'
+          default: INACTIVE
+        phone:
+          type: string
+          example: "0912345678"
+        dob:
+          type: string
+          format: date
+          example: "2004-01-20"
+        sex:
+          type: string
+          example: "NAM"
+        avatar:
+          type: string
+        password:
+          type: string
+          format: password
+          description: Initial password. If omitted, default initial password is applied.
+        studentCourse:
+          type: string
+          example: "K18"
+        majorId:
+          type: integer
+          format: int64
+        specializationId:
+          type: integer
+          format: int64
+        subSpecializationId:
+          type: integer
+          format: int64
+        department:
+          type: string
+          example: "Công nghệ thông tin"
+        expertise:
+          type: string
+          example: "Trí tuệ nhân tạo"
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          maxLength: 150
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          maxLength: 50
+        phone:
+          type: string
+        dob:
+          type: string
+          format: date
+        sex:
+          type: string
+        avatar:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        studentCourse:
+          type: string
+        majorId:
+          type: integer
+          format: int64
+        specializationId:
+          type: integer
+          format: int64
+        subSpecializationId:
+          type: integer
+          format: int64
+        department:
+          type: string
+        expertise:
+          type: string
+        bio:
+          type: string
+
+    # -----------------------------------------------------------------------
+    # RESPONSE DATA MODELS
+    # -----------------------------------------------------------------------
+    LoginResponse:
+      type: object
+      description: |
+        Flat authentication payload. All identity and credential claims reside
+        directly at root level of `data`. Do NOT parse as `data.user`.
+      properties:
+        token:
+          type: string
+          description: JWT Access Token (stateless, 24h validity)
+          example: "eyJhbGciOiJIUzI1NiJ9..."
+        refreshToken:
+          type: string
+          description: Refresh Token (UUID or opaque token)
+          example: "6b2a0c4f-9e7d-41a2-8e1f-d748f2a1b9c3"
+        tokenType:
+          type: string
+          default: "Bearer"
+          example: "Bearer"
+        expiresIn:
+          type: integer
+          format: int64
+          description: Token lifetime in seconds (900s for 15 mins)
+          example: 900
+        userId:
+          type: integer
+          format: int64
+          example: 101
+        code:
+          type: string
+          example: "SV20260001"
+        username:
+          type: string
+          example: "student_01"
+        fullName:
+          type: string
+          example: "Nguyễn Văn Sinh Viên"
+        email:
+          type: string
+          example: "student01@unicheck.edu.vn"
+        role:
+          $ref: '#/components/schemas/Role'
+        isPasswordChanged:
+          type: boolean
+          example: true
+
+    TokenRefreshResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Newly issued Access Token
+          example: "eyJhbGciOiJIUzI1NiJ9..."
+        refreshToken:
+          type: string
+          description: Newly issued or retained Refresh Token under RTR policy
+          example: "a1c2d3e4-f5a6-7b8c-9d0e-1f2a3b4c5d6e"
+        tokenType:
+          type: string
+          default: "Bearer"
+          example: "Bearer"
+        expiresIn:
+          type: integer
+          format: int64
+          description: Token lifetime in seconds (900s for 15 mins)
+          example: 900
+
+    UserProfileResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        username:
+          type: string
+        fullName:
+          type: string
+        email:
+          type: string
+        dob:
+          type: string
+          format: date
+        phone:
+          type: string
+        sex:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        faceDataStatus:
+          $ref: '#/components/schemas/FaceDataStatus'
+        avatar:
+          type: string
+        isPasswordChanged:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        studentCourse:
+          type: string
+        gpa:
+          type: number
+          format: double
+        majorId:
+          type: integer
+          format: int64
+        specializationId:
+          type: integer
+          format: int64
+        subSpecializationId:
+          type: integer
+          format: int64
+        department:
+          type: string
+        expertise:
+          type: string
+        bio:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        username:
+          type: string
+        fullName:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        dob:
+          type: string
+          format: date
+        sex:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        faceDataStatus:
+          $ref: '#/components/schemas/FaceDataStatus'
+        avatar:
+          type: string
+        isPasswordChanged:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        studentCourse:
+          type: string
+        gpa:
+          type: number
+          format: double
+        majorId:
+          type: integer
+          format: int64
+        specializationId:
+          type: integer
+          format: int64
+        subSpecializationId:
+          type: integer
+          format: int64
+        department:
+          type: string
+        expertise:
+          type: string
+        bio:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+    # -----------------------------------------------------------------------
+    # API RESPONSE ENVELOPES (ApiResponse<T> & PageResponse<T>)
+    # -----------------------------------------------------------------------
+    ApiResponseEnvelope:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Success"
+        errorCode:
+          type: string
+          nullable: true
+          example: null
+
+    LoginApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/LoginResponse'
+
+    TokenRefreshApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TokenRefreshResponse'
+
+    UserProfileApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UserProfileResponse'
+
+    UserApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UserResponse'
+
+    UserPageApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                content:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/UserResponse'
+                pageNumber:
+                  type: integer
+                  example: 0
+                pageSize:
+                  type: integer
+                  example: 20
+                totalElements:
+                  type: integer
+                  format: int64
+                  example: 105
+                totalPages:
+                  type: integer
+                  example: 6
+                isFirst:
+                  type: boolean
+                  example: true
+                isLast:
+                  type: boolean
+                  example: false
+
+    VoidApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              nullable: true
+              example: null
+
+    StringApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: string
+              example: "Xin chào Quản trị viên (ADMIN)"
+
+    ErrorApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              nullable: true
+            errorCode:
+              $ref: '#/components/schemas/ErrorCode'
+
+    # -----------------------------------------------------------------------
+    # FACILITY REQUEST & RESPONSE MODELS (TASK-02C - F-13)
+    # -----------------------------------------------------------------------
+    RoomCreateRequest:
+      type: object
+      required:
+        - code
+        - name
+        - capacity
+      properties:
+        code:
+          type: string
+          maxLength: 20
+          example: "A201"
+        name:
+          type: string
+          maxLength: 100
+          example: "Phòng học Lý thuyết A201"
+        capacity:
+          type: integer
+          minimum: 1
+          example: 60
+        building:
+          type: string
+          maxLength: 50
+          example: "Tòa Nhà A"
+        description:
+          type: string
+          maxLength: 500
+          example: "Phòng học trang bị máy chiếu và điều hòa"
+        floor:
+          type: integer
+          example: 2
+        type:
+          $ref: '#/components/schemas/RoomType'
+        status:
+          $ref: '#/components/schemas/RoomStatus'
+
+    RoomUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: "Phòng học Lý thuyết A201 (Nâng cấp)"
+        capacity:
+          type: integer
+          minimum: 1
+          example: 70
+        building:
+          type: string
+          maxLength: 50
+          example: "Tòa Nhà A"
+        description:
+          type: string
+          maxLength: 500
+        floor:
+          type: integer
+          example: 2
+        type:
+          $ref: '#/components/schemas/RoomType'
+        status:
+          $ref: '#/components/schemas/RoomStatus'
+
+    WifiAccessPointCreateRequest:
+      type: object
+      required:
+        - ssid
+        - bssid
+      properties:
+        ssid:
+          type: string
+          maxLength: 100
+          example: "UniCheck_A201_5G"
+        bssid:
+          type: string
+          pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+          example: "00:1A:2B:3C:4D:5E"
+        name:
+          type: string
+          maxLength: 100
+          example: "AP-Cisco-A201"
+        location:
+          type: string
+          maxLength: 200
+          example: "Trần nhà trung tâm phòng A201"
+        status:
+          $ref: '#/components/schemas/WifiApStatus'
+
+    WifiAccessPointUpdateRequest:
+      type: object
+      properties:
+        ssid:
+          type: string
+          maxLength: 100
+        bssid:
+          type: string
+          pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+        name:
+          type: string
+          maxLength: 100
+        location:
+          type: string
+          maxLength: 200
+        status:
+          $ref: '#/components/schemas/WifiApStatus'
+
+    AssignWifiApRequest:
+      type: object
+      required:
+        - wifiAccessPointId
+      properties:
+        wifiAccessPointId:
+          type: integer
+          format: int64
+          example: 1
+        isPrimary:
+          type: boolean
+          default: false
+          example: true
+
+    RoomResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        code:
+          type: string
+          example: "A201"
+        name:
+          type: string
+          example: "Phòng học Lý thuyết A201"
+        capacity:
+          type: integer
+          example: 60
+        building:
+          type: string
+          example: "Tòa Nhà A"
+        description:
+          type: string
+        floor:
+          type: integer
+          example: 2
+        type:
+          $ref: '#/components/schemas/RoomType'
+        status:
+          $ref: '#/components/schemas/RoomStatus'
+        wifiAccessPointsCount:
+          type: integer
+          example: 2
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    RoomDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/RoomResponse'
+        - type: object
+          properties:
+            wifiAccessPoints:
+              type: array
+              items:
+                $ref: '#/components/schemas/RoomWifiAccessPointResponse'
+
+    WifiAccessPointResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        ssid:
+          type: string
+          example: "UniCheck_A201_5G"
+        bssid:
+          type: string
+          example: "00:1A:2B:3C:4D:5E"
+        name:
+          type: string
+          example: "AP-Cisco-A201"
+        location:
+          type: string
+          example: "Trần nhà trung tâm phòng A201"
+        status:
+          $ref: '#/components/schemas/WifiApStatus'
+        assignedRoomsCount:
+          type: integer
+          example: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    RoomWifiAccessPointResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        roomId:
+          type: integer
+          format: int64
+          example: 1
+        roomCode:
+          type: string
+          example: "A201"
+        wifiAccessPointId:
+          type: integer
+          format: int64
+          example: 1
+        ssid:
+          type: string
+          example: "UniCheck_A201_5G"
+        bssid:
+          type: string
+          example: "00:1A:2B:3C:4D:5E"
+        name:
+          type: string
+          example: "AP-Cisco-A201"
+        status:
+          $ref: '#/components/schemas/WifiApStatus'
+        isPrimary:
+          type: boolean
+          example: true
+        assignedAt:
+          type: string
+          format: date-time
+
+    FacilityStatsResponse:
+      type: object
+      properties:
+        totalRooms:
+          type: integer
+          format: int64
+          example: 24
+        availableRooms:
+          type: integer
+          format: int64
+          example: 22
+        occupiedRooms:
+          type: integer
+          format: int64
+          example: 1
+        maintenanceRooms:
+          type: integer
+          format: int64
+          example: 1
+        readinessRate:
+          type: number
+          format: double
+          example: 91.7
+        totalCapacity:
+          type: integer
+          format: int64
+          example: 1450
+        activeStudentsCount:
+          type: integer
+          format: int64
+          example: 412
+        activeWifiAps:
+          type: integer
+          format: int64
+          example: 18
+        totalWifiAps:
+          type: integer
+          format: int64
+          example: 20
+        averageRssiDbm:
+          type: integer
+          example: -58
+        onlineKiosks:
+          type: integer
+          format: int64
+          example: 8
+        totalKiosks:
+          type: integer
+          format: int64
+          example: 8
+        averageFaceLatencyMs:
+          type: integer
+          example: 142
+
+    RoomResponseApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RoomResponse'
+
+    RoomDetailApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RoomDetailResponse'
+
+    RoomPageApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                content:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/RoomResponse'
+                pageNumber:
+                  type: integer
+                pageSize:
+                  type: integer
+                totalElements:
+                  type: integer
+                  format: int64
+                totalPages:
+                  type: integer
+                isFirst:
+                  type: boolean
+                isLast:
+                  type: boolean
+
+    WifiAccessPointApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/WifiAccessPointResponse'
+
+    WifiAccessPointPageApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                content:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/WifiAccessPointResponse'
+                pageNumber:
+                  type: integer
+                pageSize:
+                  type: integer
+                totalElements:
+                  type: integer
+                  format: int64
+                totalPages:
+                  type: integer
+                isFirst:
+                  type: boolean
+                isLast:
+                  type: boolean
+
+    RoomWifiAccessPointListApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/RoomWifiAccessPointResponse'
+
+    RoomWifiAccessPointApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RoomWifiAccessPointResponse'
+
+    FacilityStatsApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/FacilityStatsResponse'
+
+    BuildingListApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: string
+
+    AvailableCheckApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                available:
+                  type: boolean
+
+    # -----------------------------------------------------------------------
+    # TIMETABLE MODELS (F-16)
+    # -----------------------------------------------------------------------
+    TimetableSlotCreateRequest:
+      type: object
+      required:
+        - classSectionId
+        - roomId
+        - date
+        - slotNumber
+      properties:
+        classSectionId:
+          type: integer
+          format: int64
+          example: 10
+        roomId:
+          type: integer
+          format: int64
+          example: 5
+        slotTypeId:
+          type: integer
+          format: int64
+          nullable: true
+          example: 1
+        date:
+          type: string
+          format: date
+          example: "2026-10-20"
+        slotNumber:
+          type: integer
+          example: 1
+        numberOfSlots:
+          type: integer
+          default: 1
+          example: 2
+        note:
+          type: string
+          nullable: true
+          example: "Thực hành buổi sáng"
+
+    TimetableSlotUpdateRequest:
+      type: object
+      properties:
+        roomId:
+          type: integer
+          format: int64
+          example: 6
+        slotTypeId:
+          type: integer
+          format: int64
+          example: 1
+        date:
+          type: string
+          format: date
+          example: "2026-10-21"
+        slotNumber:
+          type: integer
+          example: 3
+        numberOfSlots:
+          type: integer
+          example: 2
+        status:
+          $ref: '#/components/schemas/TimetableSlotStatus'
+        note:
+          type: string
+          example: "Dời lịch do bảo trì phòng"
+
+    TimetableSlotResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 101
+        classSectionId:
+          type: integer
+          format: int64
+          example: 10
+        className:
+          type: string
+          example: "CS101-01"
+        courseName:
+          type: string
+          example: "Nhập môn Lập trình"
+        courseCode:
+          type: string
+          example: "CS101"
+        semesterId:
+          type: integer
+          format: int64
+          example: 1
+        semesterCode:
+          type: string
+          example: "HK1-2026"
+        lecturerId:
+          type: integer
+          format: int64
+          example: 3
+        lecturerName:
+          type: string
+          example: "ThS. Nguyễn Văn A"
+        roomId:
+          type: integer
+          format: int64
+          example: 5
+        roomCode:
+          type: string
+          example: "A201"
+        roomName:
+          type: string
+          example: "Phòng Thực hành A201"
+        building:
+          type: string
+          example: "Tòa A"
+        roomCapacity:
+          type: integer
+          example: 50
+        slotTypeId:
+          type: integer
+          format: int64
+          example: 1
+        slotTypeName:
+          type: string
+          example: "Tiết 1-2 Sáng"
+        date:
+          type: string
+          format: date
+          example: "2026-10-20"
+        dayOfWeek:
+          type: integer
+          example: 3
+        dayOfWeekName:
+          type: string
+          example: "Thứ Ba"
+        slotNumber:
+          type: integer
+          example: 1
+        numberOfSlots:
+          type: integer
+          example: 2
+        startTime:
+          type: string
+          example: "07:30:00"
+        endTime:
+          type: string
+          example: "09:10:00"
+        status:
+          $ref: '#/components/schemas/TimetableSlotStatus'
+        note:
+          type: string
+          example: "Thực hành buổi sáng"
+        hasAttendanceSession:
+          type: boolean
+          example: false
+        enrolledStudentsCount:
+          type: integer
+          example: 42
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SlotTypeResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        code:
+          type: string
+          example: "SLOT-01"
+        name:
+          type: string
+          example: "Tiết 1 (07:00 - 07:50)"
+        slotNumber:
+          type: integer
+          example: 1
+        startTime:
+          type: string
+          example: "07:00:00"
+        endTime:
+          type: string
+          example: "07:50:00"
+        session:
+          type: string
+          example: "MORNING"
+        description:
+          type: string
+          example: "Tiết đầu buổi sáng"
+
+    TimetableConflictCheckRequest:
+      type: object
+      required:
+        - classSectionId
+        - roomId
+        - date
+        - slotNumber
+      properties:
+        slotId:
+          type: integer
+          format: int64
+          nullable: true
+          example: null
+        classSectionId:
+          type: integer
+          format: int64
+          example: 10
+        roomId:
+          type: integer
+          format: int64
+          example: 5
+        lecturerId:
+          type: integer
+          format: int64
+          nullable: true
+          example: 3
+        date:
+          type: string
+          format: date
+          example: "2026-10-20"
+        slotNumber:
+          type: integer
+          example: 1
+        numberOfSlots:
+          type: integer
+          default: 1
+          example: 2
+
+    TimetableConflictCheckResponse:
+      type: object
+      properties:
+        hasConflict:
+          type: boolean
+          example: false
+        conflictType:
+          type: string
+          nullable: true
+          example: null
+        message:
+          type: string
+          example: "Không có xung đột lịch học."
+        conflictingSlotId:
+          type: integer
+          format: int64
+          nullable: true
+        conflictingClass:
+          type: string
+          nullable: true
+        conflictingRoom:
+          type: string
+          nullable: true
+        conflictingLecturer:
+          type: string
+          nullable: true
+
+    TimetableStatsResponse:
+      type: object
+      properties:
+        totalSlots:
+          type: integer
+          format: int64
+          example: 128
+        scheduledSlots:
+          type: integer
+          format: int64
+          example: 110
+        completedSlots:
+          type: integer
+          format: int64
+          example: 12
+        cancelledSlots:
+          type: integer
+          format: int64
+          example: 6
+        totalClassSections:
+          type: integer
+          format: int64
+          example: 45
+        activeRoomsCount:
+          type: integer
+          format: int64
+          example: 18
+        occupancyRate:
+          type: number
+          format: double
+          example: 84.5
+        conflictAlertsCount:
+          type: integer
+          format: int64
+          example: 0
+
+    TimetableSlotApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TimetableSlotResponse'
+
+    TimetableSlotPageApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                content:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TimetableSlotResponse'
+                pageNumber:
+                  type: integer
+                pageSize:
+                  type: integer
+                totalElements:
+                  type: integer
+                  format: int64
+                totalPages:
+                  type: integer
+                isFirst:
+                  type: boolean
+                isLast:
+                  type: boolean
+
+    TimetableSlotListApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TimetableSlotResponse'
+
+    SlotTypeListApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/SlotTypeResponse'
+
+    TimetableConflictCheckApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TimetableConflictCheckResponse'
+
+    TimetableStatsApiResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TimetableStatsResponse'
+
+

@@ -1,280 +1,9 @@
 -- ==============================================================================
--- UniCheck - Flyway Migration V1: Initial Database Schema (50 Tables)
--- Strictly adhering to Software Design Document ERD
+-- UniCheck - Flyway Migration V3: Classes, Attendance, Grading & Communication
+-- Dependent operations tables
 -- ==============================================================================
 
--- 1. users
-CREATE TABLE users (
-    id BIGSERIAL PRIMARY KEY,
-    username VARCHAR(50) NOT NULL UNIQUE,
-    password VARCHAR(255),
-    full_name VARCHAR(150) NOT NULL,
-    email VARCHAR(150) NOT NULL UNIQUE,
-    dob DATE,
-    phone VARCHAR(20),
-    sex VARCHAR(10) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    face_data_status VARCHAR(20) DEFAULT 'NOT_REGISTERED',
-    avatar VARCHAR(255),
-    face_registration_attempts INT NOT NULL DEFAULT 0,
-    face_registration_blocked_until TIMESTAMP,
-    is_password_changed BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 2. majors
-CREATE TABLE majors (
-    id BIGSERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(200) NOT NULL,
-    description TEXT,
-    program_duration VARCHAR(50),
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 3. specializations
-CREATE TABLE specializations (
-    id BIGSERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(200) NOT NULL,
-    description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    major_id BIGINT REFERENCES majors(id) ON DELETE CASCADE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 4. sub_specializations
-CREATE TABLE sub_specializations (
-    id BIGSERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(200) NOT NULL,
-    description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    specialization_id BIGINT REFERENCES specializations(id) ON DELETE CASCADE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 5. student_profiles
-CREATE TABLE student_profiles (
-    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    course VARCHAR(20),
-    gpa DOUBLE PRECISION DEFAULT 0.0,
-    major_id BIGINT REFERENCES majors(id),
-    specialization_id BIGINT REFERENCES specializations(id),
-    sub_specialization_id BIGINT REFERENCES sub_specializations(id)
-);
-
--- 6. lecturer_profiles
-CREATE TABLE lecturer_profiles (
-    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    department VARCHAR(100),
-    expertise VARCHAR(100),
-    bio TEXT
-);
-
--- 7. lecturer_grade_otps
-CREATE TABLE lecturer_grade_otps (
-    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    otp_hash VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_used_at TIMESTAMP
-);
-
--- 8. user_permissions
-CREATE TABLE user_permissions (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    permission VARCHAR(50) NOT NULL,
-    granted_by BIGINT REFERENCES users(id),
-    granted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 9. user_device_tokens
-CREATE TABLE user_device_tokens (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(255) NOT NULL,
-    platform VARCHAR(50),
-    device_id VARCHAR(100),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 10. face_encodings (Biometric privacy: only vector embedding stored, no raw face image)
-CREATE TABLE face_encodings (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    encoding_data BYTEA NOT NULL,
-    registered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    liveness_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 11. courses
-CREATE TABLE courses (
-    id BIGSERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(200) NOT NULL,
-    description TEXT,
-    credits INT NOT NULL,
-    number_of_slots INT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    is_calculated_in_gpa BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 12. course_prerequisites
-CREATE TABLE course_prerequisites (
-    course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    prerequisite_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    PRIMARY KEY (course_id, prerequisite_id)
-);
-
--- 13. specialization_courses
-CREATE TABLE specialization_courses (
-    id BIGSERIAL PRIMARY KEY,
-    specialization_id BIGINT NOT NULL REFERENCES specializations(id) ON DELETE CASCADE,
-    course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    order_index INT,
-    semester INT,
-    note VARCHAR(500),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 14. sub_specialization_courses
-CREATE TABLE sub_specialization_courses (
-    id BIGSERIAL PRIMARY KEY,
-    sub_specialization_id BIGINT NOT NULL REFERENCES sub_specializations(id) ON DELETE CASCADE,
-    course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    order_index INT,
-    semester INT,
-    note VARCHAR(500),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 15. grade_components
-CREATE TABLE grade_components (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    type VARCHAR(50) NOT NULL,
-    weight DOUBLE PRECISION NOT NULL,
-    is_resit BOOLEAN NOT NULL DEFAULT FALSE,
-    reference_component_id BIGINT REFERENCES grade_components(id),
-    course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 16. semesters
-CREATE TABLE semesters (
-    id BIGSERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    start_date DATE NOT NULL,
-    end_date DATE NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    description TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 17. semester_configs
-CREATE TABLE semester_configs (
-    id BIGSERIAL PRIMARY KEY,
-    semester_id BIGINT NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
-    max_slot_per_day INT NOT NULL,
-    slot_per_subject_per_week INT NOT NULL,
-    slot_duration INT NOT NULL,
-    is_published BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 18. semester_weekdays
-CREATE TABLE semester_weekdays (
-    id BIGSERIAL PRIMARY KEY,
-    semester_id BIGINT NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
-    weekday INT NOT NULL
-);
-
--- 19. holidays
-CREATE TABLE holidays (
-    id BIGSERIAL PRIMARY KEY,
-    semester_id BIGINT NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
-    holiday_date DATE NOT NULL,
-    description VARCHAR(255),
-    is_recurring BOOLEAN NOT NULL DEFAULT FALSE
-);
-
--- 20. slot_types
-CREATE TABLE slot_types (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(50) NOT NULL,
-    slot_index INT NOT NULL,
-    start_time TIME NOT NULL,
-    end_time TIME NOT NULL,
-    description VARCHAR(255),
-    semester_id BIGINT REFERENCES semesters(id) ON DELETE CASCADE,
-    duration VARCHAR(20) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 21. rooms
-CREATE TABLE rooms (
-    id BIGSERIAL PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    capacity INT NOT NULL,
-    building VARCHAR(50),
-    description VARCHAR(500),
-    floor INT,
-    grid_row INT,
-    grid_col INT,
-    grid_row_span INT,
-    grid_col_span INT,
-    type VARCHAR(20) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'AVAILABLE',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 22. wifi_access_points
-CREATE TABLE wifi_access_points (
-    id BIGSERIAL PRIMARY KEY,
-    ssid VARCHAR(100) NOT NULL,
-    bssid VARCHAR(17) NOT NULL UNIQUE,
-    name VARCHAR(100),
-    location VARCHAR(200),
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 23. room_wifi_access_points
-CREATE TABLE room_wifi_access_points (
-    id BIGSERIAL PRIMARY KEY,
-    room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-    wifi_access_point_id BIGINT NOT NULL REFERENCES wifi_access_points(id) ON DELETE CASCADE,
-    signal_strength INT,
-    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
-    position_note VARCHAR(200),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 24. class_sections
+-- 1. class_sections
 CREATE TABLE class_sections (
     class_name VARCHAR(50) PRIMARY KEY,
     course_id BIGINT NOT NULL REFERENCES courses(id),
@@ -297,7 +26,7 @@ CREATE TABLE class_sections (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 25. teaching_assignments
+-- 2. teaching_assignments
 CREATE TABLE teaching_assignments (
     id BIGSERIAL PRIMARY KEY,
     lecturer_id BIGINT NOT NULL REFERENCES users(id),
@@ -305,7 +34,7 @@ CREATE TABLE teaching_assignments (
     semester_id BIGINT NOT NULL REFERENCES semesters(id)
 );
 
--- 26. enrollments
+-- 3. enrollments
 CREATE TABLE enrollments (
     id BIGSERIAL PRIMARY KEY,
     class_name VARCHAR(50) NOT NULL REFERENCES class_sections(class_name) ON DELETE CASCADE,
@@ -316,7 +45,7 @@ CREATE TABLE enrollments (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 27. timetable_slots
+-- 4. timetable_slots
 CREATE TABLE timetable_slots (
     id BIGSERIAL PRIMARY KEY,
     class_name VARCHAR(50) NOT NULL REFERENCES class_sections(class_name) ON DELETE CASCADE,
@@ -331,7 +60,21 @@ CREATE TABLE timetable_slots (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 28. student_grades
+-- 5. grade_components
+CREATE TABLE grade_components (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    type VARCHAR(50) NOT NULL,
+    weight DOUBLE PRECISION NOT NULL,
+    is_resit BOOLEAN NOT NULL DEFAULT FALSE,
+    reference_component_id BIGINT REFERENCES grade_components(id),
+    course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 6. student_grades
 CREATE TABLE student_grades (
     id BIGSERIAL PRIMARY KEY,
     enrollment_id BIGINT NOT NULL REFERENCES enrollments(id) ON DELETE CASCADE,
@@ -344,21 +87,7 @@ CREATE TABLE student_grades (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 29. attendance_configs
-CREATE TABLE attendance_configs (
-    id BIGSERIAL PRIMARY KEY,
-    config_key VARCHAR(50) NOT NULL UNIQUE,
-    manual_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    absent_threshold_minutes INT NOT NULL DEFAULT 15,
-    min_attendance_percentage DOUBLE PRECISION NOT NULL DEFAULT 80.0,
-    face_recognition_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    max_attempts INT NOT NULL DEFAULT 3,
-    wifi_location_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 30. attendance_sessions
+-- 7. attendance_sessions
 CREATE TABLE attendance_sessions (
     id BIGSERIAL PRIMARY KEY,
     timetable_slot_id BIGINT NOT NULL REFERENCES timetable_slots(id) ON DELETE CASCADE,
@@ -369,7 +98,7 @@ CREATE TABLE attendance_sessions (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 31. student_attendances
+-- 8. student_attendances
 CREATE TABLE student_attendances (
     id BIGSERIAL PRIMARY KEY,
     session_id BIGINT NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
@@ -392,7 +121,7 @@ CREATE TABLE student_attendances (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 32. assignments
+-- 9. assignments
 CREATE TABLE assignments (
     id BIGSERIAL PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
@@ -409,7 +138,7 @@ CREATE TABLE assignments (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 33. assignment_submissions
+-- 10. assignment_submissions
 CREATE TABLE assignment_submissions (
     id BIGSERIAL PRIMARY KEY,
     assignment_id BIGINT NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
@@ -425,7 +154,7 @@ CREATE TABLE assignment_submissions (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 34. chat_groups
+-- 11. chat_groups
 CREATE TABLE chat_groups (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(200) NOT NULL,
@@ -435,7 +164,7 @@ CREATE TABLE chat_groups (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 35. chat_group_members
+-- 12. chat_group_members
 CREATE TABLE chat_group_members (
     id BIGSERIAL PRIMARY KEY,
     chat_group_id BIGINT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
@@ -445,7 +174,7 @@ CREATE TABLE chat_group_members (
     left_at TIMESTAMP
 );
 
--- 36. chat_messages
+-- 13. chat_messages
 CREATE TABLE chat_messages (
     id BIGSERIAL PRIMARY KEY,
     chat_group_id BIGINT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
@@ -459,7 +188,7 @@ CREATE TABLE chat_messages (
     sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 37. chat_message_reads
+-- 14. chat_message_reads
 CREATE TABLE chat_message_reads (
     id BIGSERIAL PRIMARY KEY,
     message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
@@ -467,7 +196,7 @@ CREATE TABLE chat_message_reads (
     read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 38. chat_message_reactions
+-- 15. chat_message_reactions
 CREATE TABLE chat_message_reactions (
     id BIGSERIAL PRIMARY KEY,
     message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
@@ -476,7 +205,7 @@ CREATE TABLE chat_message_reactions (
     reacted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 39. ai_chat_sessions
+-- 16. ai_chat_sessions
 CREATE TABLE ai_chat_sessions (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -487,7 +216,7 @@ CREATE TABLE ai_chat_sessions (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 40. ai_chat_messages
+-- 17. ai_chat_messages
 CREATE TABLE ai_chat_messages (
     id BIGSERIAL PRIMARY KEY,
     session_id BIGINT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
@@ -500,7 +229,7 @@ CREATE TABLE ai_chat_messages (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 41. notifications
+-- 18. notifications
 CREATE TABLE notifications (
     id BIGSERIAL PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
@@ -512,7 +241,7 @@ CREATE TABLE notifications (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 42. news
+-- 19. news
 CREATE TABLE news (
     id BIGSERIAL PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
@@ -531,14 +260,14 @@ CREATE TABLE news (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 43. news_attachments
+-- 20. news_attachments
 CREATE TABLE news_attachments (
     id BIGSERIAL PRIMARY KEY,
     news_id BIGINT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
     url TEXT NOT NULL
 );
 
--- 44. academic_requests
+-- 21. academic_requests
 CREATE TABLE academic_requests (
     id BIGSERIAL PRIMARY KEY,
     student_id BIGINT NOT NULL REFERENCES users(id),
@@ -563,7 +292,7 @@ CREATE TABLE academic_requests (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 45. schedule_requests
+-- 22. schedule_requests
 CREATE TABLE schedule_requests (
     id BIGSERIAL PRIMARY KEY,
     requester_id BIGINT NOT NULL REFERENCES users(id),
@@ -584,33 +313,7 @@ CREATE TABLE schedule_requests (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 46. access_logs
-CREATE TABLE access_logs (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    location VARCHAR(100) NOT NULL,
-    status VARCHAR(50) NOT NULL,
-    access_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ip_address VARCHAR(45),
-    user_agent VARCHAR(255)
-);
-
--- 47. user_sessions
-CREATE TABLE user_sessions (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ip_address VARCHAR(45),
-    province VARCHAR(100),
-    city VARCHAR(100),
-    latitude DECIMAL(11,8),
-    longitude DECIMAL(11,8),
-    login_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_activity_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN DEFAULT TRUE,
-    user_agent VARCHAR(500)
-);
-
--- 48. alerts
+-- 23. alerts
 CREATE TABLE alerts (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -623,7 +326,7 @@ CREATE TABLE alerts (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 49. system_logs
+-- 24. system_logs
 CREATE TABLE system_logs (
     id BIGSERIAL PRIMARY KEY,
     action VARCHAR(200) NOT NULL,
@@ -638,7 +341,7 @@ CREATE TABLE system_logs (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 50. import_jobs
+-- 25. import_jobs
 CREATE TABLE import_jobs (
     id BIGSERIAL PRIMARY KEY,
     job_id VARCHAR(255) NOT NULL UNIQUE,
@@ -657,13 +360,10 @@ CREATE TABLE import_jobs (
     completed_at TIMESTAMP
 );
 
--- Indexes for performance
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_email ON users(email);
+-- Additional operation indexes
 CREATE INDEX idx_enrollments_student_id ON enrollments(student_id);
 CREATE INDEX idx_enrollments_class_name ON enrollments(class_name);
 CREATE INDEX idx_timetable_slots_class_name ON timetable_slots(class_name);
 CREATE INDEX idx_timetable_slots_date ON timetable_slots(date);
 CREATE INDEX idx_student_attendances_session_id ON student_attendances(session_id);
 CREATE INDEX idx_student_attendances_student_id ON student_attendances(student_id);
-CREATE INDEX idx_face_encodings_user_id ON face_encodings(user_id);

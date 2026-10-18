@@ -1,0 +1,111 @@
+// ==============================================================================
+// UniCheck - Attendance Session Management Type Definitions (TASK-05)
+// Supporting Stitch Screen 4f83098c7b904d4389563c28f54e1c48 & 300c3071598340e5981a9a5f5097f909
+// ==============================================================================
+
+export type AttendanceSessionStatus = 'CREATED' | 'OPEN' | 'CLOSED' | 'CANCELLED';
+
+export interface AttendanceSessionResponse {
+  id: number;
+  timetableSlotId: number;
+  classSectionId?: number | null;
+  className: string;
+  courseCode: string;
+  courseName: string;
+  lecturerId: number;
+  lecturerName: string;
+  lecturerCode: string;
+  roomCode: string;
+  roomName: string;
+  building: string;
+  date: string;
+  dayOfWeek: number;
+  slotNumber: number;
+  slotName: string;
+  startTime: string;
+  endTime: string;
+  status: AttendanceSessionStatus;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  totalEnrolledStudents: number;
+  totalAttendedStudents: number;
+  attendancePercentage: number;
+  canOpen: boolean;
+  canClose: boolean;
+}
+
+export interface AttendanceSessionStatusResponse {
+  id: number;
+  status: AttendanceSessionStatus;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  isOpen: boolean;
+  isClosed: boolean;
+  canGenerateQr: boolean;
+  totalEnrolledStudents: number;
+  totalAttendedStudents: number;
+  attendancePercentage: number;
+}
+
+export interface AttendanceSessionStatsResponse {
+  totalSessionsToday: number;
+  morningSessions: number;
+  afternoonSessions: number;
+  activeOpenSessions: number;
+  completedSessions: number;
+  onTimeRate: number;
+  abnormalSessions: number;
+}
+
+export interface AttendanceConfigDto {
+  id?: number | null;
+  configKey: string;
+  qrRotationIntervalSeconds: number;
+  ticketTtlSeconds: number;
+  faceThresholdPercent: number;
+  livenessEnabled: boolean;
+  kioskScanMode: string;
+  absentThresholdMinutes: number;
+  lateThresholdMinutes: number;
+  minAttendancePercentage: number;
+  manualEnabled: boolean;
+  faceRecognitionEnabled: boolean;
+  qrCodeEnabled: boolean;
+  wifiLocationEnabled: boolean;
+  allowedIpSubnet?: string | null;
+  maxAttempts: number;
+  updatedAt?: string | null;
+}
+
+export interface AttendanceSessionCreateRequest {
+  timetableSlotId: number;
+  autoOpen?: boolean;
+}
+
+export interface AttendanceSessionQueryParams {
+  search?: string;
+  semesterId?: number;
+  className?: string;
+  lecturerId?: number;
+  date?: string;
+  status?: AttendanceSessionStatus | 'ALL';
+  page?: number;
+  size?: number;
+  sort?: string;
+}
+
+export interface StudentAttendanceResponse {
+  id: number;
+  sessionId: number;
+  studentId: number;
+  studentCode: string;
+  studentName: string;
+  status: string;
+  method: string;
+  checkInTime?: string | null;
+  faceConfidence?: number | null;
+  deviceInfo?: string | null;
+  verifiedByKiosk?: string | null;
+}
