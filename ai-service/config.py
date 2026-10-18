@@ -54,3 +54,27 @@ MAX_SIMILARITY_THRESHOLD = 1.0
 
 # Supported image MIME types / extensions
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+
+# Liveness Anti-Spoofing Model Settings (MiniFASNet / Silent-Face-Anti-Spoofing)
+LIVENESS_MODEL_V2_PATH = os.environ.get(
+    "AI_LIVENESS_MODEL_V2_PATH",
+    os.path.join(MODEL_DIR, "MiniFASNetV2.onnx"),
+)
+LIVENESS_MODEL_V1SE_PATH = os.environ.get(
+    "AI_LIVENESS_MODEL_V1SE_PATH",
+    os.path.join(MODEL_DIR, "MiniFASNetV1SE.onnx"),
+)
+LIVENESS_MODEL_MODE = os.environ.get("AI_LIVENESS_MODEL_MODE", "ensemble")  # "ensemble", "v2", or "v1se"
+LIVENESS_MODEL_NAME = "MiniFASNet-Ensemble"
+LIVENESS_MODEL_VERSION = "v2_v1se_onnx"
+LIVENESS_INPUT_WIDTH = 80
+LIVENESS_INPUT_HEIGHT = 80
+LIVENESS_SCALE_V2 = 2.7
+LIVENESS_SCALE_V1SE = 4.0
+
+# Calibrated Liveness Decision Threshold (Posterior Real-Face Probability)
+# Score >= 0.70 confirms physical bona fide live person
+DEFAULT_LIVENESS_THRESHOLD = float(
+    os.environ.get("AI_LIVENESS_THRESHOLD", "0.70")
+)
+

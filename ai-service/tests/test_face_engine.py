@@ -333,15 +333,18 @@ def test_14_api_contracts(client):
 # ==============================================================================
 # TEST CASE 15: Liveness fail-closed khi model chưa sẵn sàng (Anti-spoofing)
 # ==============================================================================
-def test_15_liveness_fail_closed(client):
+def test_15_liveness_fail_closed(client, monkeypatch):
+    import app as flask_app
+    monkeypatch.setattr(flask_app.liveness_engine, "is_ready", False)
     res = client.post(
         "/api/v1/face/check-liveness",
         json={"image_base64": "dummy", "challenge": "blink"},
     )
-    assert res.status_code == 501
+    assert res.status_code == 503
     data = res.get_json()
     assert data["success"] is False
     assert data["errorCode"] == "ERR_3003"
     assert data["data"]["is_live"] is False
     assert data["data"]["status"] == "UNAVAILABLE"
     assert data["data"]["fail_closed"] is True
+

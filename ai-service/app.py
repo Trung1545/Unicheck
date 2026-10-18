@@ -22,6 +22,12 @@ from face_detector import (
 )
 from face_engine import FaceEngine, FaceEngineError
 from face_matcher import verify_vectors, FaceMatchingError
+from liveness_engine import (
+    LivenessEngine,
+    LivenessEngineError,
+    LivenessModelNotReadyError,
+)
+
 
 # Configure structured logging without leaking biometrics
 logging.basicConfig(
@@ -36,9 +42,16 @@ CORS(app)
 # Limit request payload size to 10MB
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_PAYLOAD_BYTES
 
-# Global Engine & Detector Singletons (Loaded on startup)
+# Global Engine, Detector & Liveness Singletons (Loaded on startup)
 detector = FaceDetector(config.DETECTOR_MODEL_PATH)
 engine = FaceEngine(config.RECOGNITION_MODEL_PATH)
+liveness_engine = LivenessEngine(
+    config.LIVENESS_MODEL_V2_PATH,
+    config.LIVENESS_MODEL_V1SE_PATH,
+    mode=config.LIVENESS_MODEL_MODE,
+    default_threshold=config.DEFAULT_LIVENESS_THRESHOLD,
+)
+
 
 
 @app.errorhandler(413)
@@ -97,7 +110,7 @@ def internal_error(error):
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint distinguishing service running from model readiness."""
-    is_ready = detector.is_ready and engine.is_ready
+    is_ready = detector.is_ready and engine.is_ready and liveness_engine.is_ready
     status_str = "UP" if is_ready else "DEGRADED"
 
     return (
@@ -109,15 +122,20 @@ def health():
                 "version": "1.0.0",
                 "model_ready": engine.is_ready,
                 "detector_ready": detector.is_ready,
+                "liveness_ready": liveness_engine.is_ready,
                 "model_name": config.MODEL_NAME,
                 "model_version": config.MODEL_VERSION,
+                "liveness_model_name": liveness_engine.model_name,
+                "liveness_model_version": liveness_engine.model_version,
+                "liveness_mode": liveness_engine.mode,
+                "liveness_threshold": liveness_engine.default_threshold,
                 "embedding_dimension": engine.output_dim,
                 "detector_name": config.DETECTOR_NAME,
             },
             "message": (
-                "AI Service is healthy and models are ready"
+                "AI Service is healthy and all models (Detector, Recognition, Liveness) are ready"
                 if is_ready
-                else "AI Service is running but models are degraded or missing"
+                else "AI Service is running but one or more models are degraded or missing"
             ),
             "errorCode": None,
         }),
@@ -347,27 +365,186 @@ def verify_face():
 
 @app.route("/api/v1/face/check-liveness", methods=["POST"])
 def check_liveness():
-    """Fail-closed contract for liveness anti-spoofing detection.
+    """Evaluates facial liveness and presentation attack status.
 
-    MiniFASNet anti-spoofing is not implemented in TASK-03 (scheduled for TASK-07).
-    This endpoint fails closed to strictly prevent any spoofed check-in bypass.
+    Pipeline:
+    1. Decode and validate Base64 image payload.
+    2. Detect single face using YuNet (reject 0 or >1 faces).
+    3. Execute MiniFASNet anti-spoofing model inference (scale-aware crops).
+    4. Compute calibrated real-face probability and apply threshold decision.
+    5. Return ISO/IEC 30107 compliant liveness assessment with attack breakdown.
+
+    Payload:
+        {
+            "image_base64": "<base64 encoded image string>",
+            "threshold": 0.70  # optional override (default config.DEFAULT_LIVENESS_THRESHOLD)
+        }
     """
-    logger.warning("Call to /api/v1/face/check-liveness rejected: Anti-spoofing engine UNAVAILABLE (Fail Closed)")
+    data = request.get_json(silent=True) or {}
+    image_base64 = data.get("image_base64")
+    threshold = data.get("threshold")
 
-    return (
-        jsonify({
-            "success": False,
-            "data": {
-                "is_live": False,
-                "status": "UNAVAILABLE",
-                "reason": "Liveness Anti-Spoofing engine is in development (Scheduled for TASK-07)",
-                "fail_closed": True,
-            },
-            "message": "Tính năng kiểm tra thực thể sống (Liveness Anti-Spoofing) chưa được kích hoạt trong phiên bản này",
-            "errorCode": "ERR_3003",
-        }),
-        501,
-    )
+    if not image_base64:
+        return (
+            jsonify({
+                "success": False,
+                "data": None,
+                "message": "Dữ liệu ảnh 'image_base64' không được để trống",
+                "errorCode": "ERR_1001",
+            }),
+            400,
+        )
+
+    # Fail closed if anti-spoofing engine is not ready
+    if not liveness_engine.is_ready:
+        logger.error("check_liveness invoked but liveness_engine is NOT ready (Fail-Closed)")
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "is_live": False,
+                    "status": "UNAVAILABLE",
+                    "fail_closed": True,
+                },
+                "message": "Dịch vụ chống giả mạo khuôn mặt (Anti-Spoofing) chưa sẵn sàng (Fail-Closed)",
+                "errorCode": "ERR_3003",
+            }),
+            503,
+        )
+
+    try:
+        # 1. Decode Image safely
+        image = decode_image_base64(image_base64)
+
+        # 2. Detect Single Face
+        face_info = detector.detect_single_face(image)
+
+        # 3. Predict Liveness via MiniFASNet ONNX Engine
+        result = liveness_engine.predict_liveness(image, face_info, threshold=threshold)
+
+        is_live = result["is_live"]
+        msg = (
+            "Kiểm tra thực thể (liveness) thành công - Khuôn mặt người thật"
+            if is_live
+            else "Phát hiện dấu hiệu giả mạo khuôn mặt (Presentation Attack Detected)"
+        )
+
+        return (
+            jsonify({
+                "success": True,
+                "data": {
+                    "is_live": is_live,
+                    "liveness_score": result["liveness_score"],
+                    "threshold": result["threshold"],
+                    "model_name": result["model_name"],
+                    "model_version": result["model_version"],
+                    "mode": result["mode"],
+                    "face_detected": True,
+                    "confidence": result["face_confidence"],
+                    "bounding_box": result["bounding_box"],
+                    "attack_type_detected": result["attack_type_detected"],
+                    "probabilities": result["probabilities"],
+                },
+                "message": msg,
+                "errorCode": None,
+            }),
+            200,
+        )
+
+    except NoFaceDetectedError as e:
+        logger.info("Liveness check failed: No face detected")
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "face_detected": False,
+                    "is_live": False,
+                    "model_name": liveness_engine.model_name,
+                    "model_version": liveness_engine.model_version,
+                },
+                "message": e.message,
+                "errorCode": e.error_code,
+            }),
+            e.status_code,
+        )
+
+    except MultipleFacesDetectedError as e:
+        logger.info("Liveness check failed: Multiple faces detected (%d)", e.count)
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "face_detected": False,
+                    "face_count": e.count,
+                    "is_live": False,
+                    "model_name": liveness_engine.model_name,
+                    "model_version": liveness_engine.model_version,
+                },
+                "message": e.message,
+                "errorCode": e.error_code,
+            }),
+            e.status_code,
+        )
+
+    except FaceDetectionError as e:
+        logger.warning("Liveness check face detection error: %s", e.message)
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "is_live": False,
+                },
+                "message": e.message,
+                "errorCode": e.error_code,
+            }),
+            e.status_code,
+        )
+
+    except LivenessModelNotReadyError as e:
+        logger.error("Liveness check failed: %s", e.message)
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "is_live": False,
+                    "status": "UNAVAILABLE",
+                    "fail_closed": True,
+                },
+                "message": e.message,
+                "errorCode": e.error_code,
+            }),
+            e.status_code,
+        )
+
+    except LivenessEngineError as e:
+        logger.error("Liveness engine error: %s", e.message)
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "is_live": False,
+                    "fail_closed": True,
+                },
+                "message": e.message,
+                "errorCode": e.error_code,
+            }),
+            e.status_code,
+        )
+
+    except Exception as e:
+        logger.error("Unexpected error in check_liveness: %s", e)
+        return (
+            jsonify({
+                "success": False,
+                "data": {
+                    "is_live": False,
+                    "fail_closed": True,
+                },
+                "message": "Lỗi nội bộ khi kiểm tra thực thể khuôn mặt (Fail-Closed)",
+                "errorCode": "ERR_1000",
+            }),
+            500,
+        )
 
 
 if __name__ == "__main__":
