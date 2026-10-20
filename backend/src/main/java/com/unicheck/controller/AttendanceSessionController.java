@@ -173,4 +173,19 @@ public class AttendanceSessionController {
         AttendanceConfigDto updated = attendanceSessionService.updateConfig(key, dto, principal, httpRequest);
         return ResponseEntity.ok(ApiResponse.ok(updated, "Cập nhật cấu hình cơ chế điểm danh thành công"));
     }
+
+    /**
+     * 11. Điểm danh sinh viên bằng phương thức sinh trắc học Face-ID kết hợp QR & Wi-Fi
+     * Hỗ trợ đa route: /check-in, /check-in-face, /sessions/check-in
+     */
+    @PostMapping({"/check-in", "/check-in-face", "/sessions/check-in"})
+    @PreAuthorize("hasAnyRole('STUDENT', 'ADMIN')")
+    public ResponseEntity<ApiResponse<StudentAttendanceResponse>> checkInStudent(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @Valid @RequestBody AttendanceCheckInRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        StudentAttendanceResponse response = attendanceSessionService.checkInStudent(principal, request, httpRequest);
+        return ResponseEntity.ok(ApiResponse.ok(response, "Điểm danh thành công"));
+    }
 }

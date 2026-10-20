@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/routes/app_routes.dart';
@@ -13,6 +15,7 @@ class AuthController extends GetxController {
   final RxBool isLoading = false.obs;
   final RxString errorMessage = ''.obs;
   final RxBool isRestoringSession = false.obs;
+  final RxBool hasSessionInitError = false.obs;
 
   AuthController({
     AuthApiService? authApiService,
@@ -31,22 +34,39 @@ class AuthController extends GetxController {
                 : PlatformTokenStorage());
 
   bool get isAuthenticated => user.value != null;
-
-  @override
-  void onInit() {
-    super.onInit();
-    restoreSession();
-  }
+  bool get isStudent => user.value?.isStudent ?? false;
 
   Future<void> restoreSession() async {
-    try {
-      final hasToken = await tokenStorage.hasAccessToken();
-      if (!hasToken) return;
+    if (isRestoringSession.value) return;
 
+    try {
       isRestoringSession.value = true;
+      hasSessionInitError.value = false;
+      errorMessage.value = '';
+
+      final hasToken = await tokenStorage.hasAccessToken();
+      if (!hasToken) {
+        user.value = null;
+        return;
+      }
+
       final profile = await authApiService.getMe();
       user.value = profile;
       _navigateToRoleShell(profile.role);
+    } on SocketException {
+      hasSessionInitError.value = true;
+      errorMessage.value =
+          'Không thể kết nối đến máy chủ học vụ. Vui lòng kiểm tra Wi-Fi/4G.';
+    } on DioException catch (dioErr) {
+      if (dioErr.type == DioExceptionType.connectionTimeout ||
+          dioErr.type == DioExceptionType.receiveTimeout ||
+          dioErr.type == DioExceptionType.connectionError) {
+        hasSessionInitError.value = true;
+        errorMessage.value = ApiClient.extractErrorMessage(dioErr);
+      } else {
+        await tokenStorage.clearTokens();
+        user.value = null;
+      }
     } catch (_) {
       await tokenStorage.clearTokens();
       user.value = null;
@@ -73,7 +93,7 @@ class AuthController extends GetxController {
         password: cleanPassword,
       );
 
-      // Persist real tokens
+      // Persist access and refresh tokens
       await tokenStorage.saveTokens(
         accessToken: result.tokens.accessToken,
         refreshToken: result.tokens.refreshToken,
@@ -81,6 +101,68 @@ class AuthController extends GetxController {
 
       user.value = result.user;
       _navigateToRoleShell(result.user.role);
+      return true;
+    } catch (e) {
+      errorMessage.value = ApiClient.extractErrorMessage(e);
+      return false;
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  Future<String?> forgotPassword(String email) async {
+    final cleanEmail = email.trim();
+    if (cleanEmail.isEmpty) {
+      errorMessage.value = 'Vui lòng nhập địa chỉ email trường';
+      return null;
+    }
+
+    try {
+      isLoading.value = true;
+      errorMessage.value = '';
+      final msg = await authApiService.forgotPassword(email: cleanEmail);
+      return msg;
+    } catch (e) {
+      errorMessage.value = ApiClient.extractErrorMessage(e);
+      return null;
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  Future<bool> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    try {
+      isLoading.value = true;
+      errorMessage.value = '';
+      await authApiService.resetPassword(
+        email: email.trim(),
+        otp: otp.trim(),
+        newPassword: newPassword,
+      );
+      return true;
+    } catch (e) {
+      errorMessage.value = ApiClient.extractErrorMessage(e);
+      return false;
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  Future<bool> changePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      isLoading.value = true;
+      errorMessage.value = '';
+      await authApiService.changePassword(
+        oldPassword: oldPassword,
+        newPassword: newPassword,
+      );
       return true;
     } catch (e) {
       errorMessage.value = ApiClient.extractErrorMessage(e);

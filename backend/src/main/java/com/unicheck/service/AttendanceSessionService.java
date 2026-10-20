@@ -57,4 +57,13 @@ public interface AttendanceSessionService {
             UserPrincipal principal,
             HttpServletRequest httpRequest
     );
+
+    /**
+     * Điểm danh sinh viên bằng phương thức sinh trắc học Face-ID kết hợp đối soát QR & Wi-Fi
+     */
+    StudentAttendanceResponse checkInStudent(
+            UserPrincipal principal,
+            AttendanceCheckInRequest request,
+            HttpServletRequest httpRequest
+    );
 }

@@ -13,6 +13,10 @@ import com.unicheck.security.UserPrincipal;
 import com.unicheck.service.AttendanceSessionService;
 import com.unicheck.service.SystemLogService;
 import jakarta.persistence.criteria.*;
+import com.unicheck.service.ai.AiServiceClient;
+import com.unicheck.model.dto.ai.AiCheckLivenessResponse;
+import com.unicheck.model.dto.ai.AiVerifyFaceResponse;
+import com.unicheck.model.enums.WifiApStatus;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +40,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -52,6 +57,9 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
     private final TeachingAssignmentRepository teachingAssignmentRepository;
     private final SystemLogService systemLogService;
     private final com.unicheck.security.DynamicQrRedisService dynamicQrRedisService;
+    private final FaceEncodingRepository faceEncodingRepository;
+    private final RoomWifiAccessPointRepository roomWifiAccessPointRepository;
+    private final AiServiceClient aiServiceClient;
 
     // =========================================================================
     // 1. Xem danh sách phiên điểm danh (Server-side Pagination & Filtering)
@@ -671,5 +679,252 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
             return cb.and(predicates.toArray(new Predicate[0]));
         };
+
+    // =========================================================================
+    // 11. Điểm danh sinh viên bằng sinh trắc học Face-ID kết hợp QR & Wi-Fi
+    // =========================================================================
+
+    @Override
+    @Transactional
+    public StudentAttendanceResponse checkInStudent(
+            UserPrincipal principal,
+            AttendanceCheckInRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        validateAuthenticatedUser(principal);
+        User student = principal.getUser();
+
+        // 1. Kiểm tra vai trò người dùng (Chỉ sinh viên hoặc admin chạy test)
+        if (student.getRole() != Role.STUDENT && student.getRole() != Role.ADMIN) {
+            throw new AppException(ErrorCode.FORBIDDEN, "Chỉ sinh viên mới có quyền thực hiện điểm danh");
+        }
+
+        // 2. Kiểm tra dữ liệu đầu vào
+        if (request == null) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Dữ liệu yêu cầu điểm danh không hợp lệ");
+        }
+        if (request.getFaceSampleBase64() == null || request.getFaceSampleBase64().trim().isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Dữ liệu ảnh khuôn mặt không được để trống");
+        }
+
+        // 3. Tra cứu phiên điểm danh theo sessionId hoặc slotId
+        AttendanceSession session;
+        if (request.getSessionId() != null) {
+            session = attendanceSessionRepository.findById(request.getSessionId())
+                    .orElseThrow(() -> new AppException(ErrorCode.ATTENDANCE_SESSION_NOT_FOUND,
+                            "Không tìm thấy phiên điểm danh với ID: " + request.getSessionId()));
+        } else if (request.getSlotId() != null) {
+            session = attendanceSessionRepository.findByTimetableSlotId(request.getSlotId())
+                    .orElseThrow(() -> new AppException(ErrorCode.ATTENDANCE_SESSION_NOT_FOUND,
+                            "Không tìm thấy phiên điểm danh gắn với ca học ID: " + request.getSlotId()));
+        } else {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Cần cung cấp sessionId hoặc slotId để xác định phiên điểm danh");
+        }
+
+        // 4. Kiểm tra trạng thái phiên điểm danh phải là OPEN
+        if (session.getStatus() != AttendanceSessionStatus.OPEN) {
+            throw new AppException(ErrorCode.ATTENDANCE_SESSION_CLOSED,
+                    "Ca điểm danh hiện không ở trạng thái mở tiếp nhận");
+        }
+
+        TimetableSlot slot = session.getTimetableSlot();
+        if (slot == null || slot.getClassSection() == null) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Phiên điểm danh không hợp lệ (thiếu thông tin lịch học/lớp học phần)");
+        }
+        ClassSection classSection = slot.getClassSection();
+        Course course = classSection.getCourse();
+        Room room = slot.getRoom();
+
+        // 5. Kiểm tra ghi danh của sinh viên vào lớp học phần
+        if (student.getRole() == Role.STUDENT) {
+            Optional<Enrollment> enrollmentOpt = enrollmentRepository.findByClassSection_ClassNameAndStudent_Id(
+                    classSection.getClassName(), student.getId());
+            if (enrollmentOpt.isEmpty() || enrollmentOpt.get().getStatus() != EnrollmentStatus.ENROLLED) {
+                throw new AppException(ErrorCode.FORBIDDEN,
+                        "Sinh viên không được ghi danh vào lớp học phần " + classSection.getClassName());
+            }
+        }
+
+        // 6. Kiểm tra chống điểm danh trùng lặp (Idempotency)
+        Optional<StudentAttendance> existingRecordOpt =
+                studentAttendanceRepository.findBySessionIdAndStudentId(session.getId(), student.getId());
+        if (existingRecordOpt.isPresent()) {
+            StudentAttendance existing = existingRecordOpt.get();
+            if ("PRESENT".equalsIgnoreCase(existing.getStatus()) || "LATE".equalsIgnoreCase(existing.getStatus())) {
+                throw new AppException(ErrorCode.ALREADY_CHECKED_IN,
+                        "Bạn đã điểm danh thành công cho ca học này");
+            }
+        }
+
+        // 7. Kiểm tra cấu hình và giới hạn số lần thử (Anti-Brute Force)
+        AttendanceConfig config = getOrCreateDefaultConfig();
+        int maxAttempts = config.getMaxAttempts() != null ? config.getMaxAttempts() : 3;
+
+        StudentAttendance attendanceRecord = existingRecordOpt.orElseGet(() ->
+                StudentAttendance.builder()
+                        .session(session)
+                        .student(student)
+                        .status("ABSENT")
+                        .attemptCount(0)
+                        .build()
+        );
+
+        int currentAttempts = (attendanceRecord.getAttemptCount() != null ? attendanceRecord.getAttemptCount() : 0) + 1;
+        attendanceRecord.setAttemptCount(currentAttempts);
+
+        if (currentAttempts > maxAttempts) {
+            attendanceRecord.setRequiresManualVerify(true);
+            attendanceRecord.setFailureReason("Vượt quá số lần thử điểm danh (" + currentAttempts + "/" + maxAttempts + ")");
+            studentAttendanceRepository.save(attendanceRecord);
+            throw new AppException(ErrorCode.FACE_REGISTRATION_BLOCKED,
+                    "Bạn đã vượt quá số lần thử điểm danh (" + maxAttempts + " lần). Vui lòng gặp giảng viên để xác nhận trực tiếp.");
+        }
+
+        // 8. Đối soát vị trí Wi-Fi (Nếu được cấu hình và phòng học có đăng ký Access Point)
+        if (Boolean.TRUE.equals(config.getWifiLocationEnabled()) && room != null) {
+            List<RoomWifiAccessPoint> roomAps = roomWifiAccessPointRepository.findByRoomId(room.getId());
+            if (roomAps != null && !roomAps.isEmpty()) {
+                String studentBssid = request.getWifiBssid();
+                boolean wifiMatched = studentBssid != null && roomAps.stream().anyMatch(rap ->
+                        rap.getWifiAccessPoint() != null &&
+                        rap.getWifiAccessPoint().getStatus() == WifiApStatus.ACTIVE &&
+                        rap.getWifiAccessPoint().getBssid() != null &&
+                        rap.getWifiAccessPoint().getBssid().equalsIgnoreCase(studentBssid.trim())
+                );
+                if (!wifiMatched) {
+                    attendanceRecord.setFailureReason("Vị trí Wi-Fi không khớp với phòng học " + (room.getName() != null ? room.getName() : room.getCode()));
+                    attendanceRecord.setWifiBssid(studentBssid);
+                    studentAttendanceRepository.save(attendanceRecord);
+                    log.warn("Cảnh báo đối soát Wi-Fi: Sinh viên {} (ID={}) gửi BSSID '{}' không khớp với AP phòng {}",
+                            student.getCode(), student.getId(), studentBssid, room.getCode());
+                    throw new AppException(ErrorCode.WIFI_NOT_MATCHED,
+                            "Vị trí Wi-Fi không khớp với phòng học quy định (" + (room.getName() != null ? room.getName() : room.getCode()) + ")");
+                }
+            }
+        }
+
+        // 9. Kiểm tra hồ sơ sinh trắc học đã đăng ký của sinh viên
+        FaceEncoding faceEncoding = faceEncodingRepository.findByUserId(student.getId())
+                .orElseThrow(() -> new AppException(ErrorCode.FACE_NOT_REGISTERED,
+                        "Sinh viên chưa hoàn tất đăng ký dữ liệu khuôn mặt trên hệ thống"));
+
+        if (faceEncoding.getEncodingData() == null || faceEncoding.getEncodingData().length == 0) {
+            throw new AppException(ErrorCode.FACE_NOT_REGISTERED,
+                    "Dữ liệu vector khuôn mặt của sinh viên chưa hợp lệ, vui lòng đăng ký lại Face-ID");
+        }
+
+        // Tách header Data URI (nếu có) để lấy chuỗi Base64 thuần túy
+        String imageBase64 = request.getFaceSampleBase64();
+        if (imageBase64.contains(",")) {
+            imageBase64 = imageBase64.substring(imageBase64.indexOf(",") + 1);
+        }
+
+        // 10. AI Liveness Verification (Anti-Spoofing MiniFASNet)
+        Double livenessThreshold = 0.70;
+        AiCheckLivenessResponse livenessResponse;
+        try {
+            livenessResponse = aiServiceClient.checkLiveness(imageBase64, livenessThreshold);
+        } catch (AppException e) {
+            attendanceRecord.setFailureReason("Liveness check failed: " + e.getMessage());
+            studentAttendanceRepository.save(attendanceRecord);
+            throw e;
+        }
+
+        if (livenessResponse == null || !livenessResponse.isLive()
+                || (livenessResponse.getLivenessScore() != null && livenessResponse.getLivenessScore() < livenessThreshold)) {
+            attendanceRecord.setFailureReason("Kiểm tra thực thể (liveness) thất bại: phát hiện giả mạo khuôn mặt");
+            studentAttendanceRepository.save(attendanceRecord);
+            throw new AppException(ErrorCode.FACE_LIVENESS_FAILED,
+                    "Kiểm tra thực thể (liveness) thất bại: phát hiện giả mạo khuôn mặt");
+        }
+
+        // 11. AI Face Verification (So khớp vector ArcFace 512-dim)
+        Double verifyThreshold = 0.68;
+        List<Float> registeredEmbedding = AiServiceClient.byteArrayToFloatList(faceEncoding.getEncodingData());
+        AiVerifyFaceResponse verifyResponse;
+        try {
+            verifyResponse = aiServiceClient.verifyFace(registeredEmbedding, imageBase64, verifyThreshold);
+        } catch (AppException e) {
+            attendanceRecord.setFailureReason("Face verification failed: " + e.getMessage());
+            studentAttendanceRepository.save(attendanceRecord);
+            throw e;
+        }
+
+        if (verifyResponse == null || !verifyResponse.isMatched()
+                || (verifyResponse.getSimilarity() != null && verifyResponse.getSimilarity() < verifyThreshold)) {
+            double sim = verifyResponse != null && verifyResponse.getSimilarity() != null ? verifyResponse.getSimilarity() : 0.0;
+            attendanceRecord.setFailureReason(String.format("Khuôn mặt không khớp với hồ sơ đã đăng ký (Độ tương đồng: %.2f)", sim));
+            studentAttendanceRepository.save(attendanceRecord);
+            throw new AppException(ErrorCode.FACE_NOT_MATCHED,
+                    String.format("Khuôn mặt không khớp với hồ sơ đã đăng ký (Độ tương đồng: %.2f)", sim));
+        }
+
+        // 12. Xác định trạng thái điểm danh (PRESENT vs LATE)
+        LocalDateTime now = LocalDateTime.now();
+        String finalStatus = "PRESENT";
+        if (slot.getDate() != null && slot.getSlotType() != null && slot.getSlotType().getStartTime() != null) {
+            LocalDateTime slotStart = LocalDateTime.of(slot.getDate(), slot.getSlotType().getStartTime());
+            int thresholdMins = config.getAbsentThresholdMinutes() != null ? config.getAbsentThresholdMinutes() : 15;
+            LocalDateTime lateThreshold = slotStart.plusMinutes(thresholdMins);
+            if (now.isAfter(lateThreshold)) {
+                finalStatus = "LATE";
+            }
+        }
+
+        // 13. Cập nhật và lưu bản ghi StudentAttendance vào PostgreSQL
+        attendanceRecord.setStatus(finalStatus);
+        attendanceRecord.setMethod("FACE_QR");
+        attendanceRecord.setCheckInTime(now);
+        attendanceRecord.setFaceConfidence(verifyResponse.getSimilarity() != null ? (double) verifyResponse.getSimilarity() : 0.985);
+        attendanceRecord.setWifiBssid(request.getWifiBssid());
+        String deviceNote = request.getDeviceModel() != null ? " (" + request.getDeviceModel() + ")" : "";
+        attendanceRecord.setNote("Điểm danh qua Mobile Face-ID" + deviceNote);
+        attendanceRecord.setFailureReason(null);
+        attendanceRecord.setRequiresManualVerify(false);
+        attendanceRecord.setUpdatedAt(now);
+
+        StudentAttendance savedAttendance = studentAttendanceRepository.save(attendanceRecord);
+
+        // 14. Ghi nhật ký kiểm toán (Audit Trail)
+        systemLogService.logAudit(
+                "STUDENT_CHECK_IN",
+                String.format("Sinh viên %s (%s) điểm danh thành công lớp %s (slot #%d) - Trạng thái: %s",
+                        student.getFullName(), student.getCode(), classSection.getClassName(),
+                        slot.getSlotNumber(), finalStatus),
+                student,
+                "ABSENT",
+                finalStatus,
+                httpRequest
+        );
+
+        // 15. Tạo biên nhận điện tử và đóng gói StudentAttendanceResponse
+        String dateStr = slot.getDate() != null
+                ? slot.getDate().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"))
+                : now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String courseCode = course != null ? course.getCode() : "CLS";
+        String receiptId = String.format("#ATT-%s-%s-%d", dateStr, courseCode, savedAttendance.getId());
+
+        String roomIdentifier = room != null
+                ? (room.getCode() != null ? room.getCode() : (room.getName() != null ? room.getName() : "N/A"))
+                : "N/A";
+
+        return StudentAttendanceResponse.builder()
+                .id(savedAttendance.getId())
+                .sessionId(session.getId())
+                .studentId(student.getId())
+                .studentCode(student.getCode())
+                .studentName(student.getFullName())
+                .status(finalStatus)
+                .method("FACE_QR")
+                .checkInTime(savedAttendance.getCheckInTime())
+                .faceConfidence(savedAttendance.getFaceConfidence())
+                .note(savedAttendance.getNote())
+                .receiptId(receiptId)
+                .courseCode(course != null ? course.getCode() : "")
+                .courseName(course != null ? course.getName() : "")
+                .className(classSection.getClassName())
+                .roomCode(roomIdentifier)
+                .message("Điểm danh thành công" + ("LATE".equals(finalStatus) ? " (Đi muộn)" : ""))
+                .build();
     }
 }

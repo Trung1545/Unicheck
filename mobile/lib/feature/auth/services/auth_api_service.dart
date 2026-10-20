@@ -67,4 +67,57 @@ class AuthApiService {
       // Best-effort server logout
     }
   }
+
+  Future<String> forgotPassword({required String email}) async {
+    try {
+      final response = await _dio.post(
+        ApiConstants.forgotPassword,
+        data: {'email': email},
+      );
+      final message = response.data['message'] as String? ??
+          'Nếu email tồn tại trong hệ thống, mã xác thực 6 chữ số đã được gửi qua email';
+      return message;
+    } catch (e) {
+      final msg = ApiClient.extractErrorMessage(e);
+      throw ApiException(message: msg);
+    }
+  }
+
+  Future<void> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    try {
+      await _dio.post(
+        ApiConstants.resetPassword,
+        data: {
+          'email': email,
+          'otp': otp,
+          'newPassword': newPassword,
+        },
+      );
+    } catch (e) {
+      final msg = ApiClient.extractErrorMessage(e);
+      throw ApiException(message: msg);
+    }
+  }
+
+  Future<void> changePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _dio.post(
+        ApiConstants.changePassword,
+        data: {
+          'oldPassword': oldPassword,
+          'newPassword': newPassword,
+        },
+      );
+    } catch (e) {
+      final msg = ApiClient.extractErrorMessage(e);
+      throw ApiException(message: msg);
+    }
+  }
 }
