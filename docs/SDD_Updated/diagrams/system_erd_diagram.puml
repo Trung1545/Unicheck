@@ -1,0 +1,269 @@
+@startuml System_ERD_UniCheck
+title Entity Relationship Diagram (ERD) - UniCheck v2.1 (25 Active JPA Tables vs Planned Tables)
+skinparam linetype ortho
+skinparam backgroundColor #FFFFFF
+skinparam roundcorner 5
+
+package "Active Core Schema (25 JPA Entities - Implemented & Running)" #F0FDF4 {
+  entity "users" as users {
+    * id : BIGINT <<PK>>
+    --
+    * username : VARCHAR(50) <<UNIQUE>>
+    * email : VARCHAR(100) <<UNIQUE>>
+    * password_hash : VARCHAR(255)
+    * status : VARCHAR(20)
+    created_at : TIMESTAMP
+    updated_at : TIMESTAMP
+  }
+
+  entity "roles" as roles {
+    * id : BIGINT <<PK>>
+    --
+    * name : VARCHAR(50) <<UNIQUE>>
+    description : VARCHAR(255)
+  }
+
+  entity "user_roles" as user_roles {
+    * user_id : BIGINT <<FK>>
+    * role_id : BIGINT <<FK>>
+  }
+
+  entity "student_profiles" as student_profiles {
+    * id : BIGINT <<PK>>
+    --
+    * user_id : BIGINT <<FK, UNIQUE>>
+    * student_code : VARCHAR(20) <<UNIQUE>>
+    * full_name : VARCHAR(100)
+    * major_id : BIGINT <<FK>>
+    class_name : VARCHAR(50)
+    academic_year : VARCHAR(20)
+  }
+
+  entity "lecturer_profiles" as lecturer_profiles {
+    * id : BIGINT <<PK>>
+    --
+    * user_id : BIGINT <<FK, UNIQUE>>
+    * lecturer_code : VARCHAR(20) <<UNIQUE>>
+    * full_name : VARCHAR(100)
+    * department_id : BIGINT <<FK>>
+    degree : VARCHAR(50)
+  }
+
+  entity "departments" as departments {
+    * id : BIGINT <<PK>>
+    --
+    * dept_code : VARCHAR(20) <<UNIQUE>>
+    * name : VARCHAR(100)
+  }
+
+  entity "majors" as majors {
+    * id : BIGINT <<PK>>
+    --
+    * major_code : VARCHAR(20) <<UNIQUE>>
+    * name : VARCHAR(100)
+    * department_id : BIGINT <<FK>>
+  }
+
+  entity "courses" as courses {
+    * id : BIGINT <<PK>>
+    --
+    * course_code : VARCHAR(20) <<UNIQUE>>
+    * name : VARCHAR(100)
+    * credits : INT
+    theory_hours : INT
+    practical_hours : INT
+    department_id : BIGINT <<FK>>
+  }
+
+  entity "semesters" as semesters {
+    * id : BIGINT <<PK>>
+    --
+    * semester_code : VARCHAR(20) <<UNIQUE>>
+    * name : VARCHAR(100)
+    * start_date : DATE
+    * end_date : DATE
+    * is_active : BOOLEAN
+  }
+
+  entity "rooms" as rooms {
+    * id : BIGINT <<PK>>
+    --
+    * room_number : VARCHAR(20) <<UNIQUE>>
+    building : VARCHAR(50)
+    capacity : INT
+    latitude : DOUBLE PRECISION
+    longitude : DOUBLE PRECISION
+  }
+
+  entity "wifi_access_points" as wifi_access_points {
+    * id : BIGINT <<PK>>
+    --
+    * bssid : VARCHAR(50) <<UNIQUE>>
+    ssid : VARCHAR(100)
+    * room_id : BIGINT <<FK>>
+  }
+
+  entity "class_sections" as class_sections {
+    * id : BIGINT <<PK>>
+    --
+    * section_code : VARCHAR(50) <<UNIQUE>>
+    * course_id : BIGINT <<FK>>
+    * semester_id : BIGINT <<FK>>
+    * lecturer_id : BIGINT <<FK>>
+    * room_id : BIGINT <<FK>>
+    max_capacity : INT
+    current_enrolled : INT
+  }
+
+  entity "enrollments" as enrollments {
+    * id : BIGINT <<PK>>
+    --
+    * student_id : BIGINT <<FK>>
+    * class_section_id : BIGINT <<FK>>
+    enrolled_at : TIMESTAMP
+    status : VARCHAR(20)
+  }
+
+  entity "class_schedules" as class_schedules {
+    * id : BIGINT <<PK>>
+    --
+    * class_section_id : BIGINT <<FK>>
+    * room_id : BIGINT <<FK>>
+    * day_of_week : INT
+    * slot_number : INT
+    * start_time : TIME
+    * end_time : TIME
+  }
+
+  entity "attendance_configs" as attendance_configs {
+    * id : BIGINT <<PK>>
+    --
+    * class_section_id : BIGINT <<FK, UNIQUE>>
+    early_open_minutes : INT
+    late_tolerance_minutes : INT
+    face_similarity_threshold : FLOAT
+    max_gps_radius_meters : FLOAT
+    require_wifi_validation : BOOLEAN
+  }
+
+  entity "attendance_sessions" as attendance_sessions {
+    * id : BIGINT <<PK>>
+    --
+    * class_section_id : BIGINT <<FK>>
+    * schedule_id : BIGINT <<FK>>
+    * session_date : DATE
+    * start_time : TIMESTAMP
+    * end_time : TIMESTAMP
+    * status : VARCHAR(20)
+  }
+
+  entity "attendance_records" as attendance_records {
+    * id : BIGINT <<PK>>
+    --
+    * session_id : BIGINT <<FK>>
+    * student_id : BIGINT <<FK>>
+    * status : VARCHAR(20)
+    checkin_time : TIMESTAMP
+    method : VARCHAR(20)
+    similarity_score : FLOAT
+    verified : BOOLEAN
+    notes : TEXT
+  }
+
+  entity "student_face_data" as student_face_data {
+    * id : BIGINT <<PK>>
+    --
+    * student_id : BIGINT <<FK, UNIQUE>>
+    * face_embedding : BYTEA (2048 Bytes)
+    face_image : VARCHAR(255) <<NULL>>
+    enrolled_at : TIMESTAMP
+    updated_at : TIMESTAMP
+  }
+
+  entity "audit_logs" as audit_logs {
+    * id : BIGINT <<PK>>
+    --
+    user_id : BIGINT <<FK>>
+    * action : VARCHAR(100)
+    resource : VARCHAR(100)
+    ip_address : VARCHAR(50)
+    status : VARCHAR(20)
+    created_at : TIMESTAMP
+  }
+}
+
+package "Planned Schema (25 Tables in Flyway - Future Extension Scope)" #EFF6FF {
+  entity "assignments" as assignments {
+    * id : BIGINT <<PK>>
+    class_section_id : BIGINT <<FK>>
+    title : VARCHAR(255)
+    due_date : TIMESTAMP
+  }
+  entity "student_submissions" as student_submissions {
+    * id : BIGINT <<PK>>
+    assignment_id : BIGINT <<FK>>
+    student_id : BIGINT <<FK>>
+    submission_path : VARCHAR(255)
+  }
+  entity "grade_components" as grade_components {
+    * id : BIGINT <<PK>>
+    course_id : BIGINT <<FK>>
+    name : VARCHAR(100)
+    weight_percentage : FLOAT
+  }
+  entity "student_grades" as student_grades {
+    * id : BIGINT <<PK>>
+    component_id : BIGINT <<FK>>
+    student_id : BIGINT <<FK>>
+    score : FLOAT
+  }
+  entity "chat_groups" as chat_groups {
+    * id : BIGINT <<PK>>
+    class_section_id : BIGINT <<FK>>
+    name : VARCHAR(100)
+  }
+  entity "chat_messages" as chat_messages {
+    * id : BIGINT <<PK>>
+    group_id : BIGINT <<FK>>
+    sender_id : BIGINT <<FK>>
+    content : TEXT
+  }
+  entity "ai_conversations" as ai_conversations {
+    * id : BIGINT <<PK>>
+    user_id : BIGINT <<FK>>
+    started_at : TIMESTAMP
+  }
+}
+
+users ||--o{ user_roles
+roles ||--o{ user_roles
+users ||--o| student_profiles
+users ||--o| lecturer_profiles
+departments ||--o{ majors
+majors ||--o{ student_profiles
+departments ||--o{ lecturer_profiles
+departments ||--o{ courses
+courses ||--o{ class_sections
+semesters ||--o{ class_sections
+lecturer_profiles ||--o{ class_sections
+rooms ||--o{ class_sections
+rooms ||--o{ wifi_access_points
+rooms ||--o{ class_schedules
+class_sections ||--o{ enrollments
+student_profiles ||--o{ enrollments
+class_sections ||--o{ class_schedules
+class_sections ||--o| attendance_configs
+class_sections ||--o{ attendance_sessions
+attendance_sessions ||--o{ attendance_records
+student_profiles ||--o{ attendance_records
+student_profiles ||--o| student_face_data
+users ||--o{ audit_logs
+
+class_sections ..> assignments : planned
+assignments ..> student_submissions : planned
+courses ..> grade_components : planned
+grade_components ..> student_grades : planned
+class_sections ..> chat_groups : planned
+chat_groups ..> chat_messages : planned
+users ..> ai_conversations : planned
+@enduml

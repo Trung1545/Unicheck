@@ -133,5 +133,5 @@ export const updateAttendanceConfigApi = async (
 export const getAttendanceCheckInsApi = async (
   sessionId: number
 ): Promise<ApiResponse<StudentAttendanceResponse[]>> => {
-  return apiClient.get(`/attendance/sessions/${sessionId}/attendances`);
+  return apiClient.get(`/attendance/sessions/${sessionId}/recent-checkins`);
 };

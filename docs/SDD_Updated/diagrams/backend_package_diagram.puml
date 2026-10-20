@@ -1,0 +1,104 @@
+@startuml Backend_Package_Diagram_UniCheck
+title Backend Package Diagram - UniCheck (Spring Boot 3.3.4, Java 22/21)
+skinparam packageStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+package "vn.edu.unicheck" {
+  package "config" {
+    [SecurityConfig (CORS, CSRF disable, Stateless Session)]
+    [JwtAuthenticationFilter]
+    [RedisConfig]
+    [WebMvcConfig]
+  }
+
+  package "controller" {
+    [AuthController (/api/v1/auth/*)]
+    [UserController (/api/users/*)]
+    [StudentProfileController (/api/students/*)]
+    [LecturerController (/api/lecturers/*)]
+    [SemesterController (/api/semesters/*)]
+    [CourseController (/api/courses/*)]
+    [ClassSectionController (/api/class-sections/*)]
+    [EnrollmentController (/api/enrollments/*)]
+    [ScheduleController (/api/schedules/*)]
+    [RoomController (/api/rooms/*)]
+    [AttendanceSessionController (/api/attendance/sessions/*)]
+    [AttendanceRecordController (/api/attendance/records/*)]
+    [AttendanceConfigController (/api/attendance/configs/*)]
+  }
+
+  package "service" {
+    [AuthService]
+    [UserService]
+    [StudentProfileService]
+    [LecturerProfileService]
+    [SemesterService]
+    [CourseService]
+    [ClassSectionService]
+    [EnrollmentService]
+    [ScheduleService]
+    [RoomService]
+    [AttendanceSessionService]
+    [AttendanceRecordService]
+    [AttendanceConfigService]
+    [AiClientService (RestTemplate / HTTP to Flask)]
+    [ExcelReportService (Apache POI)]
+  }
+
+  package "repository (Spring Data JPA)" {
+    [UserRepository]
+    [RoleRepository]
+    [StudentProfileRepository]
+    [LecturerProfileRepository]
+    [DepartmentRepository]
+    [MajorRepository]
+    [SpecializationRepository]
+    [SemesterRepository]
+    [CourseRepository]
+    [ClassSectionRepository]
+    [EnrollmentRepository]
+    [ClassScheduleRepository]
+    [RoomRepository]
+    [WifiAccessPointRepository]
+    [AttendanceConfigRepository]
+    [AttendanceSessionRepository]
+    [AttendanceRecordRepository]
+    [StudentFaceDataRepository]
+    [AuditLogRepository]
+  }
+
+  package "entity (25 JPA Entities)" {
+    [User, Role, StudentProfile, LecturerProfile]
+    [Department, Major, Specialization]
+    [Semester, Course, ClassSection, Enrollment, ClassSchedule]
+    [Room, Building, WifiAccessPoint]
+    [AttendanceConfig, AttendanceSession, AttendanceRecord]
+    [StudentFaceData (BYTEA 2048B), AuditLog]
+  }
+
+  package "dto" {
+    package "request" {
+      [LoginRequest, RefreshTokenRequest, CreateUserRequest, CheckinRequest]
+    }
+    package "response" {
+      [AuthResponse, UserResponse, ScheduleResponse, AttendanceSummaryResponse]
+    }
+  }
+
+  package "exception" {
+    [GlobalExceptionHandler, ResourceNotFoundException, UnauthorizedException, BusinessException]
+  }
+
+  package "security" {
+    [JwtTokenProvider, CustomUserDetailsService, UserPrincipal]
+  }
+}
+
+controller ..> service : invokes
+service ..> repository : data operations
+repository ..> entity : manages persistence
+service ..> dto : maps payloads
+controller ..> dto : validates inputs
+service ..> exception : throws domain exceptions
+controller ..> config : protected by
+@enduml

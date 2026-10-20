@@ -1,0 +1,161 @@
+erDiagram
+    users ||--o| student_profiles : "has"
+    users ||--o| lecturer_profiles : "has"
+    users ||--o{ user_permissions : "granted"
+    users ||--o{ user_device_tokens : "owns"
+    users ||--o{ user_sessions : "maintains"
+    users ||--o{ face_encodings : "registers"
+    users ||--o{ access_logs : "records"
+    users ||--o{ lecturer_grade_otps : "receives"
+
+    semesters ||--o| semester_configs : "configured_by"
+    semesters ||--o{ holidays : "includes"
+    semesters ||--o{ class_sections : "contains"
+    courses ||--o{ class_sections : "offered_as"
+
+    rooms ||--o{ room_wifi_access_points : "located_at"
+    wifi_access_points ||--o{ room_wifi_access_points : "covers"
+
+    class_sections ||--o{ teaching_assignments : "assigned_to"
+    users ||--o{ teaching_assignments : "teaches"
+
+    class_sections ||--o{ enrollments : "enrolled_in"
+    users ||--o{ enrollments : "studies"
+
+    class_sections ||--o{ timetable_slots : "schedules"
+    slot_types ||--o{ timetable_slots : "defines_time"
+    rooms ||--o{ timetable_slots : "hosted_in"
+    users ||--o{ timetable_slots : "lectured_by"
+
+    timetable_slots ||--o| attendance_sessions : "instantiates"
+    attendance_sessions ||--o{ student_attendances : "tracks"
+    users ||--o{ student_attendances : "attends"
+
+    users {
+        bigint id PK
+        varchar username UK
+        varchar password_hash
+        varchar email UK
+        varchar full_name
+        varchar role
+        varchar user_status
+        varchar face_data_status
+        boolean is_password_changed
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    face_encodings {
+        bigint id PK
+        bigint user_id FK
+        bytea face_encoding "2048 bytes float32[512]"
+        bytea face_image "NULL (ISO 27001)"
+        varchar model_version
+        timestamp created_at
+    }
+
+    courses {
+        varchar course_code PK
+        varchar course_name
+        int credits
+        text prerequisite_codes
+        boolean is_active
+    }
+
+    semesters {
+        bigint id PK
+        varchar semester_code UK
+        varchar semester_name
+        date start_date
+        date end_date
+        varchar status "ACTIVE | CLOSED"
+    }
+
+    rooms {
+        bigint id PK
+        varchar room_code UK
+        varchar building
+        int capacity
+        varchar room_type
+    }
+
+    wifi_access_points {
+        bigint id PK
+        varchar bssid UK "Normalized XX:XX:XX:XX:XX:XX"
+        varchar ssid
+        int signal_threshold_dbm
+        boolean is_active
+    }
+
+    room_wifi_access_points {
+        bigint id PK
+        bigint room_id FK
+        bigint wifi_access_point_id FK
+        int priority_level
+    }
+
+    class_sections {
+        varchar class_name PK
+        varchar course_code FK
+        bigint semester_id FK
+        bigint primary_lecturer_id FK
+        int max_capacity
+        int current_enrolled
+        varchar status "OPEN | CLOSED | CANCELLED"
+    }
+
+    enrollments {
+        bigint id PK
+        varchar class_name FK
+        bigint student_id FK
+        varchar status "ENROLLED | DROPPED"
+        timestamp enrolled_at
+    }
+
+    timetable_slots {
+        bigint id PK
+        varchar class_name FK
+        bigint slot_type_id FK
+        bigint room_id FK
+        bigint lecturer_id FK
+        date slot_date
+        varchar status "SCHEDULED | CANCELLED | COMPLETED"
+    }
+
+    attendance_sessions {
+        bigint id PK
+        bigint slot_id FK,UK
+        varchar class_name
+        date session_date
+        varchar status "CREATED | OPEN | CLOSED"
+        timestamp opened_at
+        timestamp closed_at
+        int total_attendees
+        int absent_count
+        int present_count
+        int late_count
+    }
+
+    student_attendances {
+        bigint id PK
+        bigint session_id FK
+        bigint student_id FK
+        varchar status "PRESENT | LATE | ABSENT"
+        varchar method "FACE_ID | QR | MANUAL"
+        timestamp check_in_time
+        double face_confidence
+        varchar wifi_bssid
+        boolean requires_manual_verify
+        varchar failure_reason
+    }
+
+    attendance_configs {
+        bigint id PK
+        varchar config_key UK
+        int qr_rotation_interval_seconds
+        int ticket_ttl_seconds
+        double ai_face_match_threshold
+        double ai_liveness_threshold
+        varchar allowed_wifi_subnets
+        int min_attendance_percentage
+    }

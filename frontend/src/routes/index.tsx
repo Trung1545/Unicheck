@@ -343,6 +343,40 @@ export const AppRoutes: React.FC = () => {
         }
       />
 
+      {/* Lecturer & Student Timetable Routes (TASK-02D) */}
+      <Route
+        path="/lecturer/timetable"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <MasterTimetablePage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/student/timetable"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <MasterTimetablePage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/timetable"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <MasterTimetablePage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
       {/* Attendance Session Management (TASK-05 - Stitch 4f83098c7b904d4389563c28f54e1c48) */}
       <Route
         path="/admin/attendance/sessions"

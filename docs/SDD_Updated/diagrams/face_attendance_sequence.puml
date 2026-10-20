@@ -1,0 +1,72 @@
+@startuml Face_Attendance_Sequence_UniCheck
+title Face Attendance Sequence Diagram - UniCheck Realtime Multi-Factor Check-in (TASK-06 Target)
+skinparam backgroundColor #FFFFFF
+skinparam sequenceMessageAlign center
+
+actor Student as "Sinh viên\n(Student)"
+participant Mobile as "Flutter Client\n(face_checkin_view)"
+participant Backend as "Spring Boot Backend\n(AttendanceRecordController)"
+participant AIService as "Flask AI Service\n(/api/v1/ai/verify)"
+database Database as "PostgreSQL 15"
+database Redis as "Redis 7 Cache"
+
+Student -> Mobile : Chọn ca học hiện tại & bấm "Điểm danh FaceID"
+Mobile -> Mobile : Kích hoạt Camera, lấy tọa độ GPS (Lat/Lng), quét WiFi BSSID
+Mobile -> Mobile : Chụp frame khuôn mặt chất lượng cao
+
+Mobile -> Backend : POST /api/attendance/records/checkin\n(sessionId, imageFrame, gpsLocation, wifiBssid)
+
+Backend -> Database : SELECT FROM attendance_sessions WHERE id = sessionId
+Database --> Backend : Session Data (status, room_id, start_time, end_time)
+
+alt Phiên không ở trạng thái ACTIVE hoặc ngoài khung giờ
+  Backend --> Mobile : HTTP 400 Bad Request: "Phiên điểm danh chưa mở hoặc đã kết thúc"
+end
+
+Backend -> Database : SELECT FROM attendance_configs WHERE class_section_id = ...
+Database --> Backend : Config (max_gps_radius, require_wifi, face_threshold = 0.68)
+
+group Xác thực Đa nhân tố Ngoại vi (Geofencing & Network)
+  Backend -> Backend : Tính khoảng cách Haversine(GPS_Mobile, GPS_Room)\nKiểm tra Distance <= Config.max_radius (VD: 50m)
+  Backend -> Database : Kiểm tra wifiBssid IN (SELECT bssid FROM wifi_access_points WHERE room_id = ...)
+  alt Vi phạm vị trí địa lý hoặc sai mạng WiFi phòng học
+    Backend --> Mobile : HTTP 403 Forbidden: "Vị trí không hợp lệ hoặc không kết nối đúng WiFi phòng học"
+  end
+end
+
+group Xác thực Sinh trắc học AI (Biometric Verification)
+  Backend -> Database : SELECT face_embedding FROM student_face_data WHERE student_id = ...
+  Database --> Backend : Stored 2048-byte BYTEA vector (512 float32)
+  
+  Backend -> AIService : POST /api/v1/ai/verify\n(current_image_frame, stored_embedding_512)
+  
+  AIService -> AIService : 1. YuNet: Phát hiện khuôn mặt (Conf >= 0.60)
+  alt Không tìm thấy khuôn mặt hoặc nhiều hơn 1 khuôn mặt
+    AIService --> Backend : HTTP 400: { "error": "Yêu cầu chính xác 1 khuôn mặt trong khung hình" }
+  end
+  
+  AIService -> AIService : 2. Dual Ensemble MiniFASNet (V2 + V1SE):\nTính Softmax Liveness Score
+  alt Liveness Score < 0.70 (Phát hiện ảnh in, màn hình, giả mạo)
+    AIService --> Backend : HTTP 400: { "error": "Phát hiện giả mạo khuôn mặt (Spoof detected)" }
+    Backend --> Mobile : HTTP 400: "Xác thực liveness thất bại. Vui lòng thử lại với mặt thật."
+  end
+
+  AIService -> AIService : 3. ArcFace MobileFaceNet:\nTrích xuất vector 512D của frame hiện tại\nTính Cosine Distance giữa stored_vector và current_vector
+  
+  alt Cosine Distance <= 0.68 (Khuôn mặt trùng khớp)
+    AIService --> Backend : HTTP 200 OK: { "match": true, "distance": 0.38, "liveness_score": 0.96 }
+  else Không khớp khuôn mặt
+    AIService --> Backend : HTTP 200 OK: { "match": false, "distance": 0.82 }
+    Backend --> Mobile : HTTP 401 Unauthorized: "Khuôn mặt không khớp với hồ sơ đã đăng ký"
+  end
+end
+
+group Ghi nhận Kết quả Điểm danh (Idempotent Commit)
+  Backend -> Backend : Xác định trạng thái: checkinTime <= startTime + tolerance ? PRESENT : LATE
+  Backend -> Database : INSERT INTO attendance_records\n(session_id, student_id, status, checkin_time, method = 'FACE_ID', verified = true)\nON CONFLICT (session_id, student_id) DO NOTHING
+  Database --> Backend : 1 row inserted
+  Backend -> Redis : Cập nhật đếm sĩ số thời gian thực (Increment present count)
+  Backend --> Mobile : HTTP 200 OK: { "status": "PRESENT", "checkinTime": "07:35:12", "message": "Điểm danh thành công!" }
+  Mobile -> Student : Hiển thị màn hình thành công xanh lá (Checked-in)
+end
+@enduml

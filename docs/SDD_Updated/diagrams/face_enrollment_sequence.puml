@@ -1,0 +1,66 @@
+@startuml Face_Enrollment_Sequence_UniCheck
+title Face Enrollment Sequence Diagram - UniCheck Realtime 3-Step Head Pose
+skinparam backgroundColor #FFFFFF
+skinparam sequenceMessageAlign center
+
+actor Student as "Sinh viên\n(Student)"
+participant MobileView as "Flutter View\n(face_enrollment_view)"
+participant MLKit as "Google ML Kit\n(On-Device Detector)"
+participant PoseEval as "HeadPoseEvaluator\n(Euler Angles: Yaw, Pitch)"
+participant Backend as "Spring Boot Backend\n(StudentProfileController)"
+participant AIService as "Flask AI Service\n(/api/v1/ai/extract-embedding)"
+database Database as "PostgreSQL 15\n(student_face_data)"
+
+Student -> MobileView : Mở màn hình đăng ký khuôn mặt
+MobileView -> MLKit : Khởi tạo Camera stream & Frame detector
+
+group Bước 1: Khuôn mặt trực diện (Center / Forward)
+  MobileView -> Student : Hướng dẫn: "Nhìn thẳng vào khung hình"
+  loop Liên tục phân tích camera stream
+    MLKit -> PoseEval : Truyền Euler Angles (Yaw, Pitch, Roll)
+    PoseEval -> PoseEval : Kiểm tra |Yaw| <= 10° và |Pitch| <= 10°
+    alt Giữ ổn định trong 1.5 giây
+      PoseEval -> MobileView : Pose Verified: FORWARD_OK
+      MobileView -> MobileView : Chụp ảnh chất lượng cao Frame 1
+    end
+  end
+end
+
+group Bước 2: Quay đầu sang trái (Turn Left)
+  MobileView -> Student : Hướng dẫn: "Từ từ quay mặt sang TRÁI"
+  loop Liên tục phân tích camera stream
+    MLKit -> PoseEval : Truyền Euler Angles
+    PoseEval -> PoseEval : Kiểm tra Yaw < -15°
+    alt Giữ ổn định trong 1.5 giây
+      PoseEval -> MobileView : Pose Verified: LEFT_OK
+      MobileView -> MobileView : Chụp ảnh chất lượng cao Frame 2
+    end
+  end
+end
+
+group Bước 3: Quay đầu sang phải (Turn Right)
+  MobileView -> Student : Hướng dẫn: "Từ từ quay mặt sang PHẢI"
+  loop Liên tục phân tích camera stream
+    MLKit -> PoseEval : Truyền Euler Angles
+    PoseEval -> PoseEval : Kiểm tra Yaw > 15°
+    alt Giữ ổn định trong 1.5 giây
+      PoseEval -> MobileView : Pose Verified: RIGHT_OK
+      MobileView -> MobileView : Chụp ảnh chất lượng cao Frame 3
+    end
+  end
+end
+
+MobileView -> Backend : POST /api/students/face-enrollment\n(Multipart: 3 ảnh Frame 1, 2, 3 + Bearer Token)
+Backend -> Backend : Xác thực User Principal & Quyền Sinh viên
+
+Backend -> AIService : POST /api/v1/ai/extract-embedding\n(Payload: Base64/Multipart 3 Frames)
+AIService -> AIService : YuNet: Phát hiện khuôn mặt trong 3 frames
+AIService -> AIService : ArcFace: Trích xuất 3 vector 512D\nTính trung bình chuẩn hóa L2 (Average 512D Vector)
+AIService --> Backend : JSON: { "status": "SUCCESS", "embedding": [float 512], "quality_score": 0.94 }
+
+Backend -> Backend : Đóng gói Vector 512 float32 thành nhị phân\nBYTEA 2048 bytes (Little-Endian)
+Backend -> Database : INSERT / UPDATE student_face_data\n(student_id, face_embedding = bytea, face_image = NULL)
+Database --> Backend : DB Commit Success
+Backend --> MobileView : HTTP 200 OK: { "message": "Đăng ký khuôn mặt thành công" }
+MobileView -> Student : Hiển thị tích xanh hoàn tất & chuyển về Trang chủ
+@enduml

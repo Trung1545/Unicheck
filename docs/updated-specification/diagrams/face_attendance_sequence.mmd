@@ -1,0 +1,73 @@
+sequenceDiagram
+    autonumber
+    actor Student as Sinh viên (Student)
+    participant Mobile as Flutter Mobile App
+    participant Backend as Spring Boot Core
+    participant AIService as Flask AI Service
+    participant Database as PostgreSQL 15
+
+    Student->>Mobile: Chọn buổi học & Bấm Điểm danh khuôn mặt
+    Mobile->>Backend: GET /api/v1/attendance/sessions/{id}/status
+    Backend->>Database: Tra cứu phiên điểm danh theo ID
+    Database-->>Backend: Thông tin phiên (status, session_date, slot_id)
+    
+    alt Phiên chưa mở hoặc đã đóng (status != 'OPEN')
+        Backend-->>Mobile: HTTP 400 (ERR_5002: Phiên điểm danh không mở)
+        Mobile-->>Student: Báo lỗi: Phiên điểm danh hiện đang đóng
+    else Phiên đang mở (status == 'OPEN')
+        Backend-->>Mobile: HTTP 200 (status: "OPEN", allowFace: true, allowQr: true)
+        
+        Mobile->>Mobile: Kiểm tra BSSID Wi-Fi hiện tại (hoặc GPS Geofencing)
+        Mobile->>Mobile: Mở Camera quét khuôn mặt thời gian thực
+        Mobile->>Mobile: Thu nhận khung hình Selfie chất lượng cao
+        
+        Mobile->>Backend: POST /api/v1/attendance/check-in (sessionId, imageBase64, wifiBssid)
+        Backend->>Backend: 1. Kiểm tra sinh viên có trong danh sách lớp (enrollments)
+        Backend->>Database: SELECT 1 FROM enrollments WHERE class_name = :c AND student_id = :s
+        
+        alt Sinh viên không thuộc lớp học
+            Database-->>Backend: Không tìm thấy bản ghi
+            Backend-->>Mobile: HTTP 403 (ERR_4004: Sinh viên không ghi danh trong lớp)
+            Mobile-->>Student: Từ chối: Bạn không có tên trong danh sách lớp này
+        else Sinh viên hợp lệ
+            Backend->>Database: Kiểm tra sinh viên đã điểm danh phiên này chưa (Chống trùng lặp)
+            Database-->>Backend: Chưa có bản ghi PRESENT trong phiên
+            
+            Backend->>Database: Lấy mẫu khuôn mặt đã đăng ký của sinh viên (face_encodings)
+            Database-->>Backend: Vector embedding mẫu (2048 bytes BYTEA)
+            
+            alt Sinh viên chưa đăng ký Face-ID
+                Backend-->>Mobile: HTTP 400 (ERR_3004: Chưa đăng ký dữ liệu khuôn mặt)
+                Mobile-->>Student: Yêu cầu đăng ký Face-ID trước khi điểm danh
+            else Đã có khuôn mẫu
+                Backend->>AIService: 1. POST /api/v1/face/check-liveness (image_base64)
+                AIService->>AIService: YuNet Face Detection + Dual MiniFASNet ONNX (Scale 2.7 + 4.0)
+                AIService->>AIService: Softmax Probabilities -> Real-Face Score
+                
+                alt Điểm Liveness < 0.70 (Phát hiện ảnh in hoặc màn hình)
+                    AIService-->>Backend: HTTP 200 (is_live: false, attack_type: "SCREEN_REPLAY")
+                    Backend->>Database: Ghi nhận bản ghi nghi vấn (status="FAILED_LIVENESS", attempt+1)
+                    Backend-->>Mobile: HTTP 400 (ERR_3003: Cảnh báo giả mạo thực thể sống)
+                    Mobile-->>Student: Từ chối điểm danh: Phát hiện hình ảnh giả lập/màn hình
+                else Liveness đạt chuẩn (Score >= 0.70)
+                    AIService-->>Backend: HTTP 200 (is_live: true, liveness_score: 0.98)
+                    
+                    Backend->>AIService: 2. POST /api/v1/face/verify-face (face_1=probe, face_2=enrolled)
+                    AIService->>AIService: Trích xuất probe embedding ArcFace + Cosine Similarity
+                    AIService-->>Backend: HTTP 200 (verified: true, similarity: 0.89, threshold: 0.68)
+                    
+                    alt Độ tương đồng < 0.68 (Không khớp danh tính)
+                        Backend-->>Mobile: HTTP 400 (ERR_3005: Khuôn mặt không khớp với sinh viên)
+                        Mobile-->>Student: Điểm danh thất bại: Khuôn mặt không khớp hồ sơ
+                    else Khuôn mặt khớp hoàn toàn
+                        Backend->>Backend: Đánh giá thời gian điểm danh (Đúng giờ vs Đi trễ)
+                        Backend->>Database: INSERT INTO student_attendances (session_id, student_id, status='PRESENT', method='FACE_ID', face_confidence=0.89, check_in_time=NOW())
+                        Backend->>Database: UPDATE attendance_sessions SET present_count = present_count + 1
+                        Database-->>Backend: Ghi nhận thành công
+                        Backend-->>Mobile: HTTP 200 (success: true, status: "PRESENT", checkInTime)
+                        Mobile-->>Student: Điểm danh thành công! Hiển thị thẻ xác nhận xanh lục.
+                    end
+                end
+            end
+        end
+    end

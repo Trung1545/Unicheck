@@ -101,6 +101,7 @@ export const AttendanceSessionManagementPage: React.FC = () => {
   const [selectedSlotIdForCreate, setSelectedSlotIdForCreate] = useState<number | null>(null);
   const [autoOpenOnCreate, setAutoOpenOnCreate] = useState(false);
   const [createModalLoading, setCreateModalLoading] = useState(false);
+  const [createModalError, setCreateModalError] = useState<string | null>(null);
 
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -135,7 +136,16 @@ export const AttendanceSessionManagementPage: React.FC = () => {
     try {
       const res = await getAttendanceSessionStatsApi();
       if (res.success && res.data) {
-        setStats(res.data);
+        const raw = res.data as any;
+        setStats({
+          totalSessionsToday: res.data.totalSessionsToday ?? raw.totalToday ?? 0,
+          morningSessions: res.data.morningSessions ?? raw.morning ?? 0,
+          afternoonSessions: res.data.afternoonSessions ?? raw.afternoon ?? 0,
+          activeOpenSessions: res.data.activeOpenSessions ?? raw.openCount ?? 0,
+          completedSessions: res.data.completedSessions ?? raw.closedCount ?? 0,
+          onTimeRate: res.data.onTimeRate ?? raw.attendanceRatePercentage ?? 100.0,
+          abnormalSessions: res.data.abnormalSessions ?? raw.abnormalCount ?? 0,
+        });
       }
     } catch (err: any) {
       console.warn('Could not load stats:', err?.message);
@@ -238,18 +248,29 @@ export const AttendanceSessionManagementPage: React.FC = () => {
     setShowCreateModal(true);
     setSelectedSlotIdForCreate(null);
     setAutoOpenOnCreate(false);
+    setCreateModalError(null);
     try {
       const res = await getTimetableSlotsApi({
         semesterId: selectedSemesterId,
         lecturerId: isLecturer ? user?.id : undefined,
         status: 'SCHEDULED',
-        size: 50,
+        size: 100,
       });
 
       if (res.success && res.data) {
-        const slots = Array.isArray(res.data) ? res.data : res.data.content || [];
+        const slots: TimetableSlotResponse[] = Array.isArray(res.data) ? res.data : res.data.content || [];
         setAvailableSlots(slots);
-        if (slots.length > 0) {
+
+        // Auto-select the first slot that does NOT yet have an attendance session
+        const usableSlots = slots.filter((s) => !s.hasAttendanceSession);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const todaySlot = usableSlots.find((s) => s.date === todayStr);
+
+        if (todaySlot) {
+          setSelectedSlotIdForCreate(todaySlot.id);
+        } else if (usableSlots.length > 0) {
+          setSelectedSlotIdForCreate(usableSlots[0].id);
+        } else if (slots.length > 0) {
           setSelectedSlotIdForCreate(slots[0].id);
         }
       }
@@ -266,11 +287,18 @@ export const AttendanceSessionManagementPage: React.FC = () => {
 
   const handleCreateSession = async () => {
     if (!selectedSlotIdForCreate) {
-      setError('Vui lòng chọn một tiết học hợp lệ từ thời khóa biểu');
+      setCreateModalError('Vui lòng chọn một tiết học hợp lệ từ thời khóa biểu');
+      return;
+    }
+
+    const targetSlot = availableSlots.find((s) => s.id === selectedSlotIdForCreate);
+    if (targetSlot?.hasAttendanceSession) {
+      setCreateModalError(`Buổi học ngày ${targetSlot.date} (Tiết ${targetSlot.slotNumber}) đã có phiên điểm danh trong hệ thống. Vui lòng chọn buổi học khác.`);
       return;
     }
 
     setActionLoading(true);
+    setCreateModalError(null);
     setError(null);
     try {
       const res = await createAttendanceSessionApi({
@@ -286,7 +314,9 @@ export const AttendanceSessionManagementPage: React.FC = () => {
         setTimeout(() => setSuccessMessage(null), 4000);
       }
     } catch (err: any) {
-      setError(err?.message || 'Lỗi khi khởi tạo phiên điểm danh');
+      const msg = err.response?.data?.message || err.message || 'Lỗi khi khởi tạo phiên điểm danh';
+      setCreateModalError(msg);
+      setError(msg);
     } finally {
       setActionLoading(false);
     }
@@ -522,7 +552,7 @@ export const AttendanceSessionManagementPage: React.FC = () => {
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
             <span>Tỷ lệ khớp đúng giờ TKB</span>
-            <span className="text-emerald-600 font-bold">{stats.onTimeRate.toFixed(1)}%</span>
+            <span className="text-emerald-600 font-bold">{(stats.onTimeRate ?? 100).toFixed(1)}%</span>
           </div>
         </div>
 
@@ -586,7 +616,7 @@ export const AttendanceSessionManagementPage: React.FC = () => {
           </div>
 
           {/* Date Selector */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-3 flex items-center gap-1.5">
             <input
               type="date"
               value={selectedDate}
@@ -596,6 +626,31 @@ export const AttendanceSessionManagementPage: React.FC = () => {
               }}
               className="w-full h-10 px-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
             />
+            {selectedDate ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDate('');
+                  setPage(0);
+                }}
+                title="Bỏ lọc ngày (xem tất cả các phiên)"
+                className="h-10 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-600 font-medium whitespace-nowrap shrink-0 shadow-2xs"
+              >
+                Tất cả ngày
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDate(new Date().toISOString().split('T')[0]);
+                  setPage(0);
+                }}
+                title="Lọc ngày hôm nay"
+                className="h-10 px-2.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-xs text-blue-700 font-medium whitespace-nowrap shrink-0 shadow-2xs"
+              >
+                Hôm nay
+              </button>
+            )}
           </div>
 
           {/* Quick Clear Button */}
@@ -824,16 +879,16 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                         <td className="py-3.5 px-4 min-w-[140px]">
                           <div className="flex justify-between items-center mb-1 text-xs">
                             <span className="font-semibold text-slate-800">
-                              {ses.totalAttendedStudents} / {ses.totalEnrolledStudents} SV
+                              {ses.totalAttendedStudents ?? 0} / {ses.totalEnrolledStudents ?? 0} SV
                             </span>
-                            <span className="font-bold text-blue-600">{ses.attendancePercentage.toFixed(1)}%</span>
+                            <span className="font-bold text-blue-600">{(ses.attendancePercentage ?? 0).toFixed(1)}%</span>
                           </div>
                           <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
                             <div
                               className={`h-full rounded-full ${
-                                ses.attendancePercentage >= 80 ? 'bg-emerald-500' : 'bg-blue-600'
+                                (ses.attendancePercentage ?? 0) >= 80 ? 'bg-emerald-500' : 'bg-blue-600'
                               }`}
-                              style={{ width: `${Math.min(100, ses.attendancePercentage)}%` }}
+                              style={{ width: `${Math.min(100, ses.attendancePercentage ?? 0)}%` }}
                             />
                           </div>
                         </td>
@@ -988,11 +1043,11 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                 <div>
                   <span className="text-xs text-slate-500 uppercase font-medium">Tỷ lệ tham gia thực tế</span>
                   <div className="flex items-baseline gap-1 mt-0.5">
-                    <span className="text-2xl font-bold text-blue-700">{selectedSession.totalAttendedStudents}</span>
-                    <span className="text-sm text-slate-500">/ {selectedSession.totalEnrolledStudents} SV</span>
+                    <span className="text-2xl font-bold text-blue-700">{selectedSession.totalAttendedStudents ?? 0}</span>
+                    <span className="text-sm text-slate-500">/ {selectedSession.totalEnrolledStudents ?? 0} SV</span>
                   </div>
                   <span className="text-xs text-emerald-600 font-semibold">
-                    Đạt {selectedSession.attendancePercentage.toFixed(1)}% chuyên cần
+                    Đạt {(selectedSession.attendancePercentage ?? 0).toFixed(1)}% chuyên cần
                   </span>
                 </div>
 
@@ -1011,13 +1066,13 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                       d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                       fill="none"
                       stroke="currentColor"
-                      strokeDasharray={`${selectedSession.attendancePercentage}, 100`}
+                      strokeDasharray={`${selectedSession.attendancePercentage ?? 0}, 100`}
                       strokeLinecap="round"
                       strokeWidth="3.5"
                     />
                   </svg>
                   <span className="absolute font-mono font-bold text-[10px] text-slate-800">
-                    {Math.round(selectedSession.attendancePercentage)}%
+                    {Math.round(selectedSession.attendancePercentage ?? 0)}%
                   </span>
                 </div>
               </div>
@@ -1060,8 +1115,8 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                           <div className="font-mono font-semibold text-emerald-600 text-[11px]">
                             {ci.checkInTime ? new Date(ci.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Vừa xong'}
                           </div>
-                          {ci.faceConfidence && (
-                            <span className="text-[10px] text-slate-400">Khớp {(ci.faceConfidence * 100).toFixed(1)}%</span>
+                          {ci.faceConfidence != null && (
+                            <span className="text-[10px] text-slate-400">Khớp {((ci.faceConfidence ?? 0) * 100).toFixed(1)}%</span>
                           )}
                         </div>
                       </div>
@@ -1138,6 +1193,18 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                   : 'Chọn buổi học từ thời khóa biểu để tạo phiên điểm danh. ADMIN có thể kích hoạt phiên cho bất kỳ giảng đường nào trong trường.'}
               </p>
 
+              {createModalError && (
+                <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-center justify-between shadow-xs animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>{createModalError}</span>
+                  </div>
+                  <button type="button" onClick={() => setCreateModalError(null)} className="text-red-500 hover:text-red-700">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {createModalLoading ? (
                 <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2">
                   <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
@@ -1149,20 +1216,36 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                 </div>
               ) : (
                 <>
+                  {availableSlots.every((s) => s.hasAttendanceSession) && (
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-semibold mb-0.5">Tất cả các buổi học đã được tạo phiên điểm danh</div>
+                        <div className="text-amber-700">Tất cả các buổi học hiện có đều đã có phiên tương ứng trong cơ sở dữ liệu. Vui lòng thêm lịch học mới trong Thời khóa biểu nếu muốn tạo thêm phiên.</div>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
                       Chọn buổi học từ Thời khóa biểu <span className="text-red-500">*</span>
                     </label>
                     <select
                       value={selectedSlotIdForCreate || ''}
-                      onChange={(e) => setSelectedSlotIdForCreate(Number(e.target.value))}
+                      onChange={(e) => {
+                        setSelectedSlotIdForCreate(Number(e.target.value));
+                        setCreateModalError(null);
+                      }}
                       className="w-full h-11 px-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      {availableSlots.map((slot) => (
-                        <option key={slot.id} value={slot.id}>
-                          {slot.className} - {slot.roomCode} | {slot.date} (Tiết {slot.slotNumber}: {slot.startTime?.substring(0, 5)} - {slot.endTime?.substring(0, 5)})
-                        </option>
-                      ))}
+                      {availableSlots.map((slot) => {
+                        const isUsed = Boolean(slot.hasAttendanceSession);
+                        return (
+                          <option key={slot.id} value={slot.id} disabled={isUsed}>
+                            {slot.className} - {slot.roomCode} | {slot.date} (Tiết {slot.slotNumber}: {slot.startTime?.substring(0, 5)} - {slot.endTime?.substring(0, 5)}) {isUsed ? '⚠️ [ĐÃ CÓ PHIÊN]' : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
@@ -1195,7 +1278,11 @@ export const AttendanceSessionManagementPage: React.FC = () => {
               </button>
               <button
                 type="button"
-                disabled={actionLoading || !selectedSlotIdForCreate}
+                disabled={
+                  actionLoading ||
+                  !selectedSlotIdForCreate ||
+                  availableSlots.find((s) => s.id === selectedSlotIdForCreate)?.hasAttendanceSession
+                }
                 onClick={handleCreateSession}
                 className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50 transition-colors shadow-sm"
               >

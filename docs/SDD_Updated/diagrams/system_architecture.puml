@@ -1,0 +1,72 @@
+@startuml System_Architecture_UniCheck
+title Architecture Diagram - UniCheck Multi-Platform Attendance System (v2.1)
+skinparam componentStyle uml2
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Segoe UI", Arial, sans-serif
+
+package "Client Tier" {
+  [Web Frontend\n(React 18.3, TS 5.6, Vite, Zustand 5)\nRole: Admin & Lecturer] as WebClient #E0F2FE
+  [Mobile App\n(Flutter 3.27, Dart 3.6, GetX, Google MLKit)\nRole: Student] as MobileClient #DCFCE7
+}
+
+package "Backend Application Tier (Spring Boot 3.3.4, Java 22/21)" {
+  [API Gateway & Security\n(Spring Security, JJWT 0.12.6, Dual-Route)] as SecurityModule #F3E8FF
+  
+  package "Core Business Services" {
+    [Auth & User Service] as AuthService #F1F5F9
+    [Academic & Class Service] as AcademicService #F1F5F9
+    [Schedule & Timetable Service] as ScheduleService #F1F5F9
+    [Attendance Session Service] as AttendanceService #FEF08A
+    [Reporting & Excel Service\n(Apache POI 5.3)] as ReportService #F1F5F9
+  }
+  
+  [AI Integration Client\n(RestTemplate / Internal HTTP)] as AIClient #FED7AA
+  [JPA / Hibernate Data Access Layer\n(25 Active Entities)] as DataAccess #E2E8F0
+}
+
+package "AI Computer Vision Tier (Python 3.11, Flask 3.1)" {
+  [Face Detection Engine\n(YuNet ONNX, Conf >= 0.60, 5 Landmarks)] as FaceDetector #FFEDD5
+  [Anti-Spoofing Liveness Engine\n(MiniFASNet Dual Ensemble: V2 + V1SE, Thresh >= 0.70)] as LivenessEngine #FFEDD5
+  [Feature Extraction Engine\n(ArcFace MobileFaceNet ONNX, 512D Float32)] as FaceMatcher #FFEDD5
+  [Fail-Closed Error Handler\n(Status 503 / 400 on Ambiguity)] as AIErrorHandler #FECACA
+}
+
+package "Data Persistence Tier" {
+  database "PostgreSQL 15" as PostgresDB #DBEAFE {
+    folder "Core Schema (25 Active JPA Tables)" {
+      [users, roles, profiles, class_sections,\nattendance_sessions, attendance_records,\nstudent_face_data (BYTEA 2048B), etc.]
+    }
+    folder "Planned Schema (25 Extension Tables)" {
+      [assignments, submissions, quizzes, grades,\nchat_messages, ai_conversations, etc.]
+    }
+  }
+  database "Redis 7" as RedisDB #FEE2E2 {
+    [Token Blacklist, Active Sessions, Temp Cache]
+  }
+}
+
+WebClient --> SecurityModule : HTTPS / JSON REST API\n(/api/v1/auth/*, /api/*)
+MobileClient --> SecurityModule : HTTPS / JSON & Multipart\n(Check-in & 3-Step Enrollment)
+
+SecurityModule --> AuthService
+SecurityModule --> AcademicService
+SecurityModule --> ScheduleService
+SecurityModule --> AttendanceService
+SecurityModule --> ReportService
+
+AuthService --> RedisDB : Validate & Store Refresh Tokens
+AttendanceService --> AIClient : Forward Face Frames & Verify
+AIClient --> FaceDetector : Raw Image Frame
+FaceDetector --> LivenessEngine : Cropped Face Region
+LivenessEngine --> FaceMatcher : Live Confirmed Face
+FaceMatcher --> AIClient : 512D Vector / Cosine Match Score
+AIErrorHandler ..> AIClient : Return Fail-Closed Code
+
+AuthService --> DataAccess
+AcademicService --> DataAccess
+ScheduleService --> DataAccess
+AttendanceService --> DataAccess
+ReportService --> DataAccess
+
+DataAccess --> PostgresDB : JPA / Hibernate CRUD (Port 5432)
+@enduml

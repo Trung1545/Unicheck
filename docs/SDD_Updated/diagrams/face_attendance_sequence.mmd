@@ -1,0 +1,34 @@
+sequenceDiagram
+  autonumber
+  actor Student as Sinh viên (Student)
+  participant App as Flutter App (face_checkin_view)
+  participant Backend as Spring Boot (/api/attendance/records/checkin)
+  participant AI as Flask AI Service (/api/v1/ai/verify)
+  participant DB as PostgreSQL 15
+  participant Redis as Redis 7 Cache
+
+  Student->>App: Chọn ca học và bấm Điểm danh FaceID
+  App->>App: Lấy ảnh camera, tọa độ GPS (Lat/Lng) và WiFi BSSID
+  App->>Backend: POST /api/attendance/records/checkin (SessionId, Frame, GPS, BSSID)
+  Backend->>DB: Truy vấn phiên học & cấu hình (attendance_sessions, attendance_configs)
+  DB-->>Backend: Session (ACTIVE) & Config (max_gps_radius, require_wifi)
+
+  rect rgb(255, 250, 240)
+    Note over Backend: Kiểm tra ngoại vi: GPS trong bán kính phòng học & BSSID khớp WiFi phòng
+  end
+
+  Backend->>DB: Lấy vector khuôn mặt đã đăng ký (BYTEA 2048 bytes)
+  DB-->>Backend: Vector embedding 512 chiều (float32)
+  Backend->>AI: POST /api/v1/ai/verify (current_frame, stored_embedding)
+  
+  rect rgb(240, 255, 240)
+    Note over AI: 1. YuNet: Phát hiện 1 khuôn mặt (Conf >= 0.60)<br/>2. MiniFASNet Dual Ensemble: Liveness Score >= 0.70<br/>3. ArcFace MobileFaceNet: Cosine Distance <= 0.68
+  end
+
+  AI-->>Backend: HTTP 200 OK: { match: true, distance: 0.38, liveness_score: 0.95 }
+  Backend->>Backend: Đánh giá thời gian: checkinTime <= startTime + tolerance ? PRESENT : LATE
+  Backend->>DB: INSERT INTO attendance_records (session_id, student_id, status, method='FACE_ID')
+  DB-->>Backend: Ghi nhận thành công (Idempotent ON CONFLICT)
+  Backend->>Redis: Cập nhật đếm sĩ số có mặt thời gian thực
+  Backend-->>App: HTTP 200 OK: { status: "PRESENT", checkinTime: "07:32:15" }
+  App->>Student: Hiển thị giao diện chúc mừng điểm danh thành công

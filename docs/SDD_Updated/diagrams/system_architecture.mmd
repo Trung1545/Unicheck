@@ -1,0 +1,44 @@
+flowchart TD
+  subgraph ClientTier["TẦNG KHÁCH HÀNG (CLIENT TIER)"]
+    Web["Web Frontend (React 18.3, TS 5.6, Vite, Zustand 5)\nQuản trị viên & Giảng viên"]
+    Mobile["Mobile Client (Flutter 3.27, Dart 3.6, GetX, Google MLKit)\nSinh viên (Student)"]
+  end
+
+  subgraph BackendTier["TẦNG ỨNG DỤNG BACKEND (SPRING BOOT 3.3.4, JAVA 22/21)"]
+    Gateway["Security Filter & Routing\nDual-Route: /api/v1/* & /api/*\nJJWT 0.12.6 & BCrypt"]
+    
+    subgraph Services["Core Application Services"]
+      AuthSvc["AuthService & UserService"]
+      AcademicSvc["Course, Semester & ClassSection Service"]
+      ScheduleSvc["ClassSchedule Service"]
+      AttSvc["AttendanceSession & AttendanceRecord Service"]
+      ReportSvc["ExcelReportService (Apache POI 5.3)"]
+    end
+    
+    DataLayer["Data Access Layer\n25 Active JPA Entities & Spring Data Repositories"]
+    AIClient["AI RestTemplate Client (Internal HTTP)"]
+  end
+
+  subgraph AITier["TẦNG DỊCH VỤ THỊ GIÁC MÁY TÍNH AI (FLASK 3.1, PYTHON 3.11)"]
+    YuNet["Face Detection Engine\nYuNet ONNX (Conf >= 0.60, 5 Landmarks)"]
+    MiniFASNet["Anti-Spoofing Liveness Engine\nDual Ensemble: MiniFASNetV2 + MiniFASNetV1SE (Softmax >= 0.70)"]
+    ArcFace["Feature Extraction Engine\nArcFace MobileFaceNet ONNX (512D Float32, Cosine Dist <= 0.68)"]
+    FailClosed["Fail-Closed Handler\nTrả về Status 503 / 400 khi suy luận lỗi"]
+  end
+
+  subgraph DataTier["TẦNG LƯU TRỮ DỮ LIỆU"]
+    Postgres[("PostgreSQL 15 Database\n- 25 Active Tables (JPA)\n- 25 Planned Tables (Flyway)\n- student_face_data: BYTEA 2048B")]
+    Redis[("Redis 7 In-Memory Cache\n- JWT Refresh Tokens & RTR\n- Token Blacklist & Session Stats")]
+  end
+
+  Web -->|HTTPS / REST JSON| Gateway
+  Mobile -->|HTTPS / REST & Multipart| Gateway
+  Gateway --> Services
+  AuthSvc --> Redis
+  AttSvc --> AIClient
+  AIClient --> YuNet
+  YuNet --> MiniFASNet
+  MiniFASNet --> ArcFace
+  FailClosed -.-> AIClient
+  Services --> DataLayer
+  DataLayer --> Postgres

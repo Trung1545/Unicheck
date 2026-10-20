@@ -21,9 +21,16 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.util.StringUtils;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -69,8 +76,9 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
             throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền quản lý phiên điểm danh");
         }
 
-        Page<AttendanceSession> sessionsPage = attendanceSessionRepository.findSessionsWithFilter(
-                semesterId, className, effectiveLecturerId, date, status, search, pageable);
+        Specification<AttendanceSession> spec = createSpecification(
+                semesterId, className, effectiveLecturerId, date, status, search);
+        Page<AttendanceSession> sessionsPage = attendanceSessionRepository.findAll(spec, pageable);
 
         return sessionsPage.map(this::mapToResponse);
     }
@@ -603,5 +611,55 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 .maxAttempts(config.getMaxAttempts())
                 .wifiLocationEnabled(config.getWifiLocationEnabled())
                 .build();
+    }
+
+    private Specification<AttendanceSession> createSpecification(
+            Long semesterId,
+            String className,
+            Long lecturerId,
+            LocalDate date,
+            AttendanceSessionStatus status,
+            String search
+    ) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            Join<AttendanceSession, TimetableSlot> ts = root.join("timetableSlot", JoinType.INNER);
+            Join<TimetableSlot, ClassSection> cs = ts.join("classSection", JoinType.INNER);
+
+            if (semesterId != null) {
+                predicates.add(cb.equal(cs.get("semester").get("id"), semesterId));
+            }
+            if (StringUtils.hasText(className)) {
+                predicates.add(cb.equal(cs.get("className"), className.trim()));
+            }
+            if (lecturerId != null) {
+                Predicate sessionLecturer = cb.equal(root.get("lecturer").get("id"), lecturerId);
+                Predicate classLecturer = cb.equal(cs.get("lecturer").get("id"), lecturerId);
+                predicates.add(cb.or(sessionLecturer, classLecturer));
+            }
+            if (date != null) {
+                predicates.add(cb.equal(ts.get("date"), date));
+            }
+            if (status != null) {
+                predicates.add(cb.equal(root.get("status"), status));
+            }
+            if (StringUtils.hasText(search)) {
+                String pattern = "%" + search.trim().toLowerCase() + "%";
+                Join<ClassSection, Course> c = cs.join("course", JoinType.LEFT);
+                Join<TimetableSlot, Room> r = ts.join("room", JoinType.LEFT);
+                Join<AttendanceSession, User> l = root.join("lecturer", JoinType.LEFT);
+
+                predicates.add(cb.or(
+                        cb.like(cb.lower(cs.get("className")), pattern),
+                        cb.like(cb.lower(c.get("name")), pattern),
+                        cb.like(cb.lower(c.get("code")), pattern),
+                        cb.like(cb.lower(r.get("code")), pattern),
+                        cb.like(cb.lower(l.get("fullName")), pattern)
+                ));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
     }
 }

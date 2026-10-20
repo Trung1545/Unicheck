@@ -1,0 +1,54 @@
+@startuml Auth_Token_Refresh_Sequence
+title Authentication & Token Refresh Rotation (RTR) - UniCheck
+skinparam backgroundColor #FFFFFF
+skinparam sequenceMessageAlign center
+
+actor Client as "Client\n(Web / Mobile)"
+participant Gateway as "JwtAuthenticationFilter"
+participant AuthCtrl as "AuthController\n(/api/v1/auth/*)"
+participant JwtProv as "JwtTokenProvider"
+database Redis as "Redis 7 Cache\n(Token Blacklist & Store)"
+database DB as "PostgreSQL 15\n(users, user_roles)"
+
+group 1. Luồng Đăng nhập (Initial Login)
+  Client -> AuthCtrl : POST /api/v1/auth/login { username, password }
+  AuthCtrl -> DB : Kiểm tra thông tin người dùng & mật khẩu (BCrypt)
+  DB --> AuthCtrl : User entity, Roles (ADMIN / LECTURER / STUDENT)
+  AuthCtrl -> JwtProv : Sinh Access Token (15 phút) & Refresh Token (7 ngày)
+  AuthCtrl -> Redis : Lưu Refresh Token (Key: refreshToken:userId, TTL: 7 days)
+  AuthCtrl --> Client : HTTP 200 OK: { accessToken, refreshToken, userProfile }
+end
+
+group 2. Gọi API thông thường với Access Token
+  Client -> Gateway : GET /api/schedules/my-schedule (Header: Bearer AccessToken)
+  Gateway -> JwtProv : Giải mã và kiểm tra hạn Access Token
+  Gateway -> Redis : Kiểm tra Token có trong Blacklist không?
+  Gateway -> Gateway : Thiết lập SecurityContext (UserPrincipal)
+  Gateway -> Client : Trả về dữ liệu nghiệp vụ
+end
+
+group 3. Cơ chế Refresh Token Rotation (RTR) khi Access Token hết hạn
+  Client -> Gateway : GET /api/... (Bearer ExpiredAccessToken)
+  Gateway --> Client : HTTP 401 Unauthorized (Token Expired)
+  
+  Client -> AuthCtrl : POST /api/v1/auth/refresh { refreshToken: RT_Old }
+  AuthCtrl -> Redis : Kiểm tra RT_Old có hợp lệ và khớp với UserId không?
+  
+  alt RT_Old đã từng bị dùng lại (Tấn công Replay Attack Detected!)
+    AuthCtrl -> Redis : Xóa toàn bộ token session của UserId (Revoke all tokens)
+    AuthCtrl --> Client : HTTP 403 Forbidden: "Phát hiện phiên xâm phạm. Vui lòng đăng nhập lại!"
+  else RT_Old hợp lệ
+    AuthCtrl -> Redis : Đưa RT_Old vào Blacklist hoặc Xóa RT_Old
+    AuthCtrl -> JwtProv : Sinh Access Token MỚI (15 min) + Refresh Token MỚI (RT_New, 7 days)
+    AuthCtrl -> Redis : Lưu RT_New (TTL: 7 days)
+    AuthCtrl --> Client : HTTP 200 OK: { accessToken: AT_New, refreshToken: RT_New }
+  end
+end
+
+group 4. Luồng Đăng xuất (Logout)
+  Client -> AuthCtrl : POST /api/v1/auth/logout (Header: Bearer AT, Body: RT)
+  AuthCtrl -> Redis : Thêm AT vào Blacklist (TTL = thời gian sống còn lại của AT)
+  AuthCtrl -> Redis : Xóa RT khỏi Redis Cache
+  AuthCtrl --> Client : HTTP 200 OK: "Đăng xuất thành công"
+end
+@enduml

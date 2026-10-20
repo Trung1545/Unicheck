@@ -1,0 +1,67 @@
+graph LR
+    subgraph Actors ["Tác Tử Hệ Thống (Actors)"]
+        Admin((Quản trị viên\nADMIN))
+        Lecturer((Giảng viên\nLECTURER))
+        Student((Sinh viên\nSTUDENT))
+        AIService((Dịch vụ AI\nFlask Engine))
+    end
+
+    subgraph AuthModule ["Phân Hệ Xác Thực & Tài Khoản"]
+        UC01["UC-01: Đăng nhập & Đổi mật khẩu"]
+        UC02["UC-02: Quản lý hồ sơ cá nhân"]
+        UC03["UC-03: Quản lý người dùng & Import CSV"]
+    end
+
+    subgraph AcademicModule ["Phân Hệ Quản Lý Học Vụ & Cơ Sở Vật Chất"]
+        UC04["UC-04: Quản lý danh mục học phần"]
+        UC05["UC-05: Quản lý học kỳ & niên khóa"]
+        UC06["UC-06: Quản lý phòng học & Wi-Fi AP"]
+        UC07["UC-07: Quản lý lớp học phần & Ghi danh"]
+        UC08["UC-08: Xếp lịch thời khóa biểu & Kiểm tra xung đột"]
+    end
+
+    subgraph BiometricModule ["Phân Hệ Sinh Trắc Học & AI"]
+        UC09["UC-09: Đăng ký Face-ID thời gian thực\n(Multi-Angle Head Pose)"]
+        UC10["UC-10: Trích xuất ArcFace Embedding & Chuẩn hóa"]
+        UC11["UC-11: Kiểm tra thực thể sống Liveness\n(MiniFASNet Dual Ensemble)"]
+    end
+
+    subgraph AttendanceModule ["Phân Hệ Phiên & Điểm Danh"]
+        UC12["UC-12: Khởi tạo & Cấu hình phiên điểm danh"]
+        UC13["UC-13: Mở & Đóng phiên điểm danh"]
+        UC14["UC-14: Điểm danh sinh trắc học khuôn mặt\n(Mobile Check-in)"]
+        UC15["UC-15: Giám sát thống kê & Lịch sử phiên"]
+        UC16["UC-16: Cập nhật cấu hình động cơ chế điểm danh"]
+    end
+
+    %% Quan hệ Actor -> Use Case
+    Admin --> UC01
+    Admin --> UC02
+    Admin --> UC03
+    Admin --> UC04
+    Admin --> UC05
+    Admin --> UC06
+    Admin --> UC07
+    Admin --> UC08
+    Admin --> UC12
+    Admin --> UC13
+    Admin --> UC15
+    Admin --> UC16
+
+    Lecturer --> UC01
+    Lecturer --> UC02
+    Lecturer --> UC12
+    Lecturer --> UC13
+    Lecturer --> UC15
+
+    Student --> UC01
+    Student --> UC02
+    Student --> UC09
+    Student --> UC14
+
+    %% Quan hệ Use Case -> AI Service
+    UC09 -.->|Gửi frame đạt chuẩn| UC10
+    UC10 --- AIService
+    UC14 -.->|Kiểm tra thực thể| UC11
+    UC14 -.->|So khớp khuôn mặt| UC10
+    UC11 --- AIService

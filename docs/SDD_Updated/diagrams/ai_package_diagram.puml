@@ -1,0 +1,51 @@
+@startuml AI_Package_Diagram_UniCheck
+title AI Service Package Diagram - UniCheck (Python 3.11, Flask 3.1, ONNX Runtime)
+skinparam packageStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+package "UniCheck AI Service (ai-service/)" {
+  package "app_layer" {
+    [app.py (Flask Application, CORS, Routes, Error Handlers)]
+    [config.py (Thresholds, Model Paths, Execution Providers)]
+  }
+
+  package "engine_core" {
+    [face_engine.py (FaceEngine Coordinator)]
+    [face_detector.py (YuNetDetector: Detection, Bounding Box, 5 Landmarks)]
+    [liveness_engine.py (LivenessEngine: MiniFASNet Dual Ensemble)]
+    [face_matcher.py (FaceMatcher: ArcFace MobileFaceNet 512D & Cosine Matching)]
+  }
+
+  package "models (ONNX Weights)" {
+    file "face_detection_yunet_2023mar.onnx" as YuNetModel
+    file "MiniFASNetV2.onnx" as MiniFASNetV2
+    file "MiniFASNetV1SE.onnx" as MiniFASNetV1SE
+    file "w600k_mbf.onnx (ArcFace MobileFaceNet)" as ArcFaceModel
+  }
+
+  package "api_endpoints" {
+    [/api/v1/ai/detect (POST)]
+    [/api/v1/ai/liveness (POST)]
+    [/api/v1/ai/extract-embedding (POST)]
+    [/api/v1/ai/verify (POST)]
+    [/health (GET)]
+  }
+
+  package "test_suite (Pytest - 39/39 Passed)" {
+    [test_app.py]
+    [test_face_engine.py]
+    [test_liveness.py]
+  }
+}
+
+app_layer --> api_endpoints : exposes
+api_endpoints --> engine_core : calls
+face_engine.py --> face_detector.py : detect face
+face_engine.py --> liveness_engine.py : assess liveness
+face_engine.py --> face_matcher.py : compute embedding & match
+face_detector.py ..> YuNetModel : infers
+liveness_engine.py ..> MiniFASNetV2 : infers
+liveness_engine.py ..> MiniFASNetV1SE : infers
+face_matcher.py ..> ArcFaceModel : infers
+test_suite ..> engine_core : verifies
+@enduml
