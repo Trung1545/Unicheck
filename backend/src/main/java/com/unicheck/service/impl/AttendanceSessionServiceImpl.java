@@ -679,6 +679,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
             return cb.and(predicates.toArray(new Predicate[0]));
         };
+    }
 
     // =========================================================================
     // 11. Điểm danh sinh viên bằng sinh trắc học Face-ID kết hợp QR & Wi-Fi
