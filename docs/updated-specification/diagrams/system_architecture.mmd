@@ -1,0 +1,53 @@
+graph TB
+    subgraph ClientLayer ["Lớp Ứng Dụng Phía Người Dùng (Client Layer)"]
+        direction TB
+        subgraph WebClient ["Web Frontend (React 18 + TypeScript + Vite)"]
+            WebAdmin["Admin Portal\n(Quản trị hệ thống & Học vụ)"]
+            WebLecturer["Lecturer Portal\n(Quản lý phiên điểm danh & Lớp)"]
+            WebStudent["Student Web Portal\n(Hồ sơ cá nhân & Đăng ký FaceID WebRTC)"]
+        end
+
+        subgraph MobileClient ["Mobile Client (Flutter 3.47 + Dart 3.13)"]
+            MobileStudent["Student Mobile App\n(Đăng nhập, Quản lý phiên, Đăng ký FaceID ML Kit,\nUI Placeholder Điểm danh)"]
+        end
+    end
+
+    subgraph GatewayAuthLayer ["Lớp Cổng Giao Tiếp & Bảo Mật (API & Security Layer)"]
+        Nginx["Reverse Proxy / Nginx\n(Cổng 80 - Điều hướng Web SPA)"]
+        SpringSecurity["Spring Security 6 + JJWT Filter\n(Xác thực Token JWT Bearer, Phân quyền RBAC,\nSingle-Flight Mutex Token Refresh)"]
+    end
+
+    subgraph ServiceLayer ["Lớp Xử Lý Nghiệp Vụ (Backend Core Layer)"]
+        subgraph SpringBootBackend ["Spring Boot 3.3.4 Application (Cổng 8080)"]
+            AuthController["AuthController\n(11 Endpoints Xác thực & Profile)"]
+            UserController["UserController\n(8 Endpoints Quản trị Người dùng)"]
+            AcademicControllers["Academic Controllers\n(Course, Semester, ClassSection, Enrollment)"]
+            FacilityController["FacilityController\n(Phòng học & Wi-Fi Access Points)"]
+            TimetableController["TimetableController\n(Lịch học & Xếp ca thời khóa biểu)"]
+            AttendanceSessionController["AttendanceSessionController\n(Quản lý Vòng đời Phiên & Cấu hình)"]
+            FaceEnrollmentController["FaceEnrollmentController\n(Điều phối Đăng ký FaceID)"]
+            AiServiceClient["AiServiceClient (Spring RestClient)\n(Giao tiếp HTTP đồng bộ sang AI Service)"]
+        end
+    end
+
+    subgraph AIServiceLayer ["Lớp Trí Tuệ Nhân Tạo (AI Microservice Layer)"]
+        subgraph FlaskAIService ["Flask AI Engine (Python 3.11, Cổng 5000)"]
+            FaceDetectorModule["FaceDetector (YuNet 2023mar ONNX)\n(Phát hiện khuôn mặt, lọc đa mặt, 5 Landmarks)"]
+            FaceEngineModule["FaceEngine (ArcFace MobileFaceNet ONNX)\n(Affine Transform, Trích xuất Vector 512D, Chuẩn hóa L2)"]
+            FaceMatcherModule["FaceMatcher\n(Cosine Similarity, Ngưỡng 0.68)"]
+            LivenessEngineModule["LivenessEngine (MiniFASNet Dual Ensemble ONNX)\n(V2 Scale 2.7 + V1SE Scale 4.0, Softmax, Ngưỡng 0.70)"]
+        end
+    end
+
+    subgraph DataStorageLayer ["Lớp Lưu Trữ Dữ Liệu (Persistence & Cache Layer)"]
+        PostgreSQL[("PostgreSQL 15 Database\n- 50 Bảng Schema Flyway (V1-V7)\n- 25 Thực thể JPA ánh xạ hoạt động\n- Lưu Vector Face BYTEA 2048 bytes\n- Ràng buộc toàn vẹn & Khóa duy nhất")]
+        RedisCache[("Redis 7 In-Memory Cache\n- JWT Refresh Token Storage & Rotation (RTR)\n- Blacklist Token khi Logout\n- Session Mutex Lock")]
+    end
+
+    WebClient -->|HTTP REST / JSON| Nginx
+    Nginx -->|Proxy Pass /api/v1| SpringSecurity
+    MobileClient -->|HTTP REST / JSON (Dio)| SpringSecurity
+    SpringSecurity --> SpringBootBackend
+    SpringBootBackend -->|Spring Data JPA| PostgreSQL
+    SpringBootBackend -->|Spring Data Redis| RedisCache
+    AiServiceClient -->|HTTP REST / JSON (Base64 Frames)| FlaskAIService

@@ -1,0 +1,70 @@
+graph TD
+    subgraph FrontendComponents ["Web Frontend Architecture (React 18 + TypeScript)"]
+        Router["React Router v6 (/routes/index.tsx)"]
+        Guards["Route Guards (ProtectedRoute, AdminRoute, GuestRoute)"]
+        Pages["18 Web Pages (Auth, Admin, Student, Profile)"]
+        UIComponents["16 Atomic UI Components (/common-ui)"]
+        ZustandStore["Zustand Auth Store (/store/auth-store.ts)"]
+        AxiosClient["Axios Interceptor Instance (/api-client)"]
+        WebRTCModule["WebRTC Face Landmarker (@mediapipe/tasks-vision)"]
+
+        Router --> Guards
+        Guards --> Pages
+        Pages --> UIComponents
+        Pages --> ZustandStore
+        Pages --> AxiosClient
+        Pages --> WebRTCModule
+    end
+
+    subgraph MobileComponents ["Mobile App Architecture (Flutter 3.47 + Dart)"]
+        FlutterRouter["GetX AppRoutes & RoleGuards (/core/routes)"]
+        FlutterViews["Shell & Feature Views (Login, StudentShell, FaceEnrollment)"]
+        AuthController["AuthController & RxUserModel (/feature/auth)"]
+        DioClient["Dio ApiClient with Refresh Mutex (/core/network)"]
+        SecureStorage["FlutterSecureStorage Platform Adapter (/core/storage)"]
+        CameraPlugin["Camera 0.11 Plugin (CameraPreview Stream)"]
+        MLKitDetector["Google ML Kit Face Detector (HeadPoseEvaluator)"]
+
+        FlutterRouter --> FlutterViews
+        FlutterViews --> AuthController
+        AuthController --> DioClient
+        DioClient --> SecureStorage
+        FlutterViews --> CameraPlugin
+        FlutterViews --> MLKitDetector
+    end
+
+    subgraph BackendComponents ["Backend Architecture (Spring Boot 3.3.4 + Java 21)"]
+        SecurityFilterChain["SecurityConfig & JwtAuthenticationFilter"]
+        Controllers["10 REST Controllers (/controller)"]
+        Services["12 Business Services & Impls (/service)"]
+        AiClient["AiServiceClient (Spring RestClient)"]
+        Repositories["25 Spring Data JPA Repositories (/repository)"]
+        JPAEntities["25 JPA Domain Entities (/model/entity)"]
+        FlywayMigration["Flyway Migration Engine (V1 -> V7)"]
+        RedisService["TokenRedisService (RTR & Blacklist)"]
+
+        SecurityFilterChain --> Controllers
+        Controllers --> Services
+        Services --> Repositories
+        Services --> AiClient
+        Services --> RedisService
+        Repositories --> JPAEntities
+        FlywayMigration --> JPAEntities
+    end
+
+    subgraph AIComponents ["AI Service Architecture (Flask + Python 3.11)"]
+        FlaskEndpoints["Flask REST Endpoints (/app.py)"]
+        YuNetDetector["FaceDetector (YuNet 2023mar ONNX)"]
+        ArcFaceEngine["FaceEngine (ArcFace MobileFaceNet ONNX)"]
+        FaceMatcher["FaceMatcher (Cosine Similarity)"]
+        MiniFASNet["LivenessEngine (MiniFASNet Dual Ensemble ONNX)"]
+
+        FlaskEndpoints --> YuNetDetector
+        FlaskEndpoints --> ArcFaceEngine
+        FlaskEndpoints --> FaceMatcher
+        FlaskEndpoints --> MiniFASNet
+    end
+
+    AxiosClient -->|JSON REST API| SecurityFilterChain
+    DioClient -->|JSON REST API| SecurityFilterChain
+    AiClient -->|Base64 JSON API| FlaskEndpoints

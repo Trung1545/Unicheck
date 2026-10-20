@@ -1,0 +1,54 @@
+sequenceDiagram
+    autonumber
+    actor Student as Sinh viên (Student)
+    participant Client as Flutter Mobile / React Web
+    participant Backend as Spring Boot (FaceEnrollmentController)
+    participant AIService as Flask AI Service (YuNet + ArcFace)
+    participant Database as PostgreSQL (face_encodings & users)
+
+    Student->>Client: Mở chức năng Đăng ký Face-ID
+    Client->>Client: Khởi tạo Camera & Khung Oval chỉ dẫn
+    Client->>Client: Bắt đầu luồng kiểm tra tư thế (Head Pose)
+
+    rect rgb(240, 248, 255)
+        Note over Student,Client: Bước 1: Thu nhận khuôn mặt nhìn thẳng (Frontal)
+        Client->>Client: Đo Euler Yaw (|Yaw| <= 8°), Roll/Pitch <= 15°, FaceCount = 1
+        Client->>Client: Giữ ổn định >= 1.0 giây -> Chụp Frame 1 (Frontal)
+    end
+
+    rect rgb(245, 255, 250)
+        Note over Student,Client: Bước 2: Hướng dẫn nghiêng trái (Left 15°)
+        Client->>Client: Đo Euler Yaw (Yaw >= 12°), Roll/Pitch <= 15°
+        Client->>Client: Đạt chuẩn -> Chụp Frame 2 (Left)
+    end
+
+    rect rgb(255, 250, 245)
+        Note over Student,Client: Bước 3: Hướng dẫn nghiêng phải (Right 15°)
+        Client->>Client: Đo Euler Yaw (Yaw <= -12°), Roll/Pitch <= 15°
+        Client->>Client: Đạt chuẩn -> Chụp Frame 3 (Right)
+    end
+
+    Client->>Backend: POST /api/v1/attendance/register-face (JWT Token, imageBase64, samples[])
+    Backend->>Backend: Kiểm tra quyền ROLE_STUDENT / LECTURER / ADMIN
+    Backend->>Backend: Kiểm tra trạng thái người dùng (ACTIVE)
+    
+    Backend->>AIService: POST /api/v1/face/extract-embedding (image_base64)
+    AIService->>AIService: YuNet Face Detection (Confidence >= 0.6, FaceCount == 1)
+    alt Không tìm thấy khuôn mặt hoặc nhiều hơn 1 mặt
+        AIService-->>Backend: HTTP 400 (ERR_3001: No Face / ERR_3002: Multiple Faces)
+        Backend-->>Client: HTTP 400 (Phản hồi mã lỗi chi tiết)
+        Client-->>Student: Yêu cầu thử lại trong điều kiện ánh sáng phù hợp
+    else Phát hiện 1 khuôn mặt hợp lệ
+        AIService->>AIService: 5-Landmark Affine Transform (Alignment)
+        AIService->>AIService: ArcFace MobileFaceNet Inference -> 512-dim Vector
+        AIService->>AIService: L2 Normalization (norm = 1.0)
+        AIService-->>Backend: HTTP 200 (embedding: [512 floats], model: "w600k_mbf_v1")
+        
+        Backend->>Backend: Chuyển đổi float[512] -> byte[2048] (Little Endian IEEE 754)
+        Backend->>Database: INSERT/UPDATE face_encodings (user_id, encoding=BYTEA, face_image=NULL)
+        Backend->>Database: UPDATE users SET face_data_status = 'REGISTERED'
+        Database-->>Backend: Ghi thành công
+        Backend-->>Client: HTTP 200 (FaceEnrollmentResponse: status="REGISTERED", version, token SHA-256)
+        Client->>Client: Cập nhật trạng thái bộ nhớ (Không lưu ảnh/vector vào LocalStorage)
+        Client-->>Student: Hiển thị thông báo Đăng ký Face-ID thành công!
+    end

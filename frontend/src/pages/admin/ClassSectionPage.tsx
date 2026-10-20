@@ -74,6 +74,9 @@ export const ClassSectionPage: React.FC = () => {
   const [semesters, setSemesters] = useState<SemesterResponse[]>([]);
   const [lecturers, setLecturers] = useState<UserResponse[]>([]);
 
+  const [isLookupsLoading, setIsLookupsLoading] = useState<boolean>(false);
+  const [lookupsError, setLookupsError] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -134,31 +137,40 @@ export const ClassSectionPage: React.FC = () => {
 
   // Load lookup metadata (courses, semesters, lecturers)
   const loadLookups = useCallback(async () => {
+    setIsLookupsLoading(true);
+    setLookupsError(null);
     try {
       const [coursesRes, semestersRes, lecturersRes] = await Promise.all([
         getCourseSummariesApi(),
-        getSemestersApi({ size: 50 }),
+        getSemestersApi({ size: 100 }),
         getUsersApi({ role: 'LECTURER', status: 'ACTIVE', size: 100 }),
       ]);
 
       if (coursesRes.success && coursesRes.data) {
-        setCourses(coursesRes.data);
+        const cList = Array.isArray(coursesRes.data)
+          ? coursesRes.data
+          : (coursesRes.data as any).content || [];
+        setCourses(cList);
       }
-      if (semestersRes.success && semestersRes.data?.content) {
-        setSemesters(semestersRes.data.content);
-        // Pre-select active semester if any
-        const activeSem = semestersRes.data.content.find((s) => s.status === 'ACTIVE');
-        if (activeSem && selectedSemester === 'all') {
-          // Keep as all or active
-        }
+      if (semestersRes.success && semestersRes.data) {
+        const sList = Array.isArray(semestersRes.data)
+          ? semestersRes.data
+          : (semestersRes.data as any).content || [];
+        setSemesters(sList);
       }
-      if (lecturersRes.success && lecturersRes.data?.content) {
-        setLecturers(lecturersRes.data.content);
+      if (lecturersRes.success && lecturersRes.data) {
+        const lList = Array.isArray(lecturersRes.data)
+          ? lecturersRes.data
+          : (lecturersRes.data as any).content || [];
+        setLecturers(lList);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Không thể nạp dữ liệu danh mục', e);
+      setLookupsError(e?.message || 'Không thể tải dữ liệu danh mục (Môn học / Học kỳ / Giảng viên)');
+    } finally {
+      setIsLookupsLoading(false);
     }
-  }, [selectedSemester]);
+  }, []);
 
   useEffect(() => {
     loadLookups();
@@ -246,20 +258,34 @@ export const ClassSectionPage: React.FC = () => {
   }, [successToast]);
 
   // Handle Create Class
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = async () => {
     setFormError(null);
-    const defaultSem = semesters.find((s) => s.status === 'ACTIVE') || semesters[0];
-    setCreateForm({
-      courseId: courses.length > 0 ? String(courses[0].id) : '',
-      semesterId: defaultSem ? String(defaultSem.id) : '',
-      lecturerId: '',
-      className: '',
-      maxStudents: 70,
-      numberOfSlots: 45,
-      status: 'OPEN',
-    });
     setIsCreateModalOpen(true);
+    // Freshly re-fetch lookups to ensure latest courses & semesters are available
+    await loadLookups();
   };
+
+  // Auto-sync form default when lookups finish or modal opens
+  useEffect(() => {
+    if (isCreateModalOpen) {
+      const activeSem = semesters.find((s) => s.status === 'ACTIVE') || semesters[0];
+      setCreateForm((prev) => {
+        const nextCourseId = prev.courseId || (courses.length > 0 ? String(courses[0].id) : '');
+        const nextSemId = prev.semesterId || (activeSem ? String(activeSem.id) : '');
+        let nextClassName = prev.className;
+        if (!nextClassName && courses.length > 0) {
+          const selectedC = courses.find((c) => String(c.id) === nextCourseId) || courses[0];
+          nextClassName = `${selectedC.code}.01`;
+        }
+        return {
+          ...prev,
+          courseId: nextCourseId,
+          semesterId: nextSemId,
+          className: nextClassName,
+        };
+      });
+    }
+  }, [isCreateModalOpen, courses, semesters]);
 
   // Auto-generate suggested className when course changes
   const handleCourseChangeInCreate = (courseId: string) => {
@@ -987,6 +1013,7 @@ export const ClassSectionPage: React.FC = () => {
           isOpen={isCreateModalOpen}
           onClose={() => setIsCreateModalOpen(false)}
           title="Thêm Lớp học phần Mới"
+          hideFooter={true}
         >
           <form onSubmit={handleCreateSubmit} className="flex flex-col gap-4">
             {formError && (
@@ -996,24 +1023,77 @@ export const ClassSectionPage: React.FC = () => {
               </div>
             )}
 
+            {lookupsError && (
+              <div className="p-3 rounded-lg bg-error-container/40 border border-error/30 text-error text-xs flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{lookupsError}</span>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => loadLookups()}
+                  className="text-xs h-7 shrink-0"
+                >
+                  Thử lại
+                </Button>
+              </div>
+            )}
+
             {/* Course Select */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-on-surface">
                 Chọn Môn học từ Catalog đào tạo <span className="text-error">*</span>
               </label>
-              <select
-                value={createForm.courseId}
-                onChange={(e) => handleCourseChangeInCreate(e.target.value)}
-                className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-on-surface outline-none focus:border-primary"
-                required
-              >
-                <option value="">-- Chọn môn học --</option>
-                {courses.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.code} - {c.name} ({c.credits} TC)
-                  </option>
-                ))}
-              </select>
+              {isLookupsLoading ? (
+                <div className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container flex items-center text-xs text-on-surface-variant gap-2">
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span>Đang tải danh mục môn học...</span>
+                </div>
+              ) : courses.length === 0 ? (
+                <div className="flex flex-col gap-2">
+                  <select
+                    disabled
+                    className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-outline opacity-70 cursor-not-allowed"
+                  >
+                    <option value="">-- Catalog đào tạo chưa có môn học --</option>
+                  </select>
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-300 text-xs flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>Chưa có môn học nào trong Catalog. Bạn cần tạo môn học trước khi mở lớp.</span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setIsCreateModalOpen(false);
+                        navigate('/admin/courses');
+                      }}
+                      className="text-xs h-7 shrink-0 flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>Tạo Môn học</span>
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <select
+                  value={createForm.courseId}
+                  onChange={(e) => handleCourseChangeInCreate(e.target.value)}
+                  className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-on-surface outline-none focus:border-primary"
+                  required
+                >
+                  <option value="">-- Chọn môn học từ Catalog --</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} — {c.name} ({c.credits} TC)
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Semester & Lecturer Row */}
@@ -1022,37 +1102,86 @@ export const ClassSectionPage: React.FC = () => {
                 <label className="text-xs font-semibold text-on-surface">
                   Học kỳ &amp; Niên khóa <span className="text-error">*</span>
                 </label>
-                <select
-                  value={createForm.semesterId}
-                  onChange={(e) => setCreateForm({ ...createForm, semesterId: e.target.value })}
-                  className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-on-surface outline-none focus:border-primary"
-                  required
-                >
-                  <option value="">-- Chọn học kỳ --</option>
-                  {semesters.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.status === 'ACTIVE' ? '(Hiện hành)' : ''}
-                    </option>
-                  ))}
-                </select>
+                {isLookupsLoading ? (
+                  <div className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container flex items-center text-xs text-on-surface-variant gap-2">
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span>Đang tải danh sách học kỳ...</span>
+                  </div>
+                ) : semesters.length === 0 ? (
+                  <div className="flex flex-col gap-2">
+                    <select
+                      disabled
+                      className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-outline opacity-70 cursor-not-allowed"
+                    >
+                      <option value="">-- Hệ thống chưa có học kỳ nào --</option>
+                    </select>
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-300 text-xs flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Chưa có học kỳ nào được cấu hình trong hệ thống.</span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setIsCreateModalOpen(false);
+                          navigate('/admin/semesters');
+                        }}
+                        className="text-xs h-7 shrink-0 flex items-center gap-1"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Tạo Học kỳ</span>
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <select
+                    value={createForm.semesterId}
+                    onChange={(e) => setCreateForm({ ...createForm, semesterId: e.target.value })}
+                    className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-on-surface outline-none focus:border-primary"
+                    required
+                  >
+                    <option value="">-- Chọn học kỳ & niên khóa --</option>
+                    {semesters.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.code}){s.status === 'ACTIVE' ? ' — [Học kỳ hiện hành]' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-on-surface">
                   Giảng viên giảng dạy
                 </label>
-                <select
-                  value={createForm.lecturerId}
-                  onChange={(e) => setCreateForm({ ...createForm, lecturerId: e.target.value })}
-                  className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-on-surface outline-none focus:border-primary"
-                >
-                  <option value="">-- Chưa phân công --</option>
-                  {lecturers.map((lec) => (
-                    <option key={lec.id} value={lec.id}>
-                      {lec.fullName} ({lec.code || lec.username})
-                    </option>
-                  ))}
-                </select>
+                {isLookupsLoading ? (
+                  <div className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container flex items-center text-xs text-on-surface-variant gap-2">
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span>Đang tải giảng viên...</span>
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={createForm.lecturerId}
+                      onChange={(e) => setCreateForm({ ...createForm, lecturerId: e.target.value })}
+                      className="h-10 px-3 rounded-lg bg-surface-container-low border border-surface-container text-sm text-on-surface outline-none focus:border-primary"
+                    >
+                      <option value="">-- Chưa phân công (Để trống) --</option>
+                      {lecturers.map((lec) => (
+                        <option key={lec.id} value={lec.id}>
+                          {lec.fullName} ({lec.code || lec.username}){lec.department ? ` — ${lec.department}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {lecturers.length === 0 && (
+                      <span className="text-[11px] text-on-surface-variant">
+                        Chưa có tài khoản Giảng viên ACTIVE. Bạn có thể mở lớp trước và phân công giảng viên sau.
+                      </span>
+                    )}
+                  </>
+                )}
               </div>
             </div>
 
@@ -1129,8 +1258,8 @@ export const ClassSectionPage: React.FC = () => {
               <Button
                 type="submit"
                 variant="primary"
-                disabled={isSubmitting}
-                className="bg-primary hover:bg-primary-container text-white"
+                disabled={isSubmitting || courses.length === 0 || semesters.length === 0}
+                className="bg-primary hover:bg-primary-container text-white disabled:opacity-50"
               >
                 {isSubmitting ? 'Đang lưu...' : 'Lưu & Mở lớp'}
               </Button>
@@ -1145,6 +1274,7 @@ export const ClassSectionPage: React.FC = () => {
           isOpen={isEditModalOpen}
           onClose={() => setIsEditModalOpen(false)}
           title={`Cập nhật Lớp học phần: ${classToEdit.className}`}
+          hideFooter={true}
         >
           <form onSubmit={handleEditSubmit} className="flex flex-col gap-4">
             {formError && (
@@ -1173,7 +1303,7 @@ export const ClassSectionPage: React.FC = () => {
                 <option value="">-- Chưa phân công --</option>
                 {lecturers.map((lec) => (
                   <option key={lec.id} value={lec.id}>
-                    {lec.fullName} ({lec.code || lec.username})
+                    {lec.fullName} ({lec.code || lec.username}){lec.department ? ` — ${lec.department}` : ''}
                   </option>
                 ))}
               </select>
@@ -1255,6 +1385,7 @@ export const ClassSectionPage: React.FC = () => {
           isOpen={isDeleteModalOpen}
           onClose={() => setIsDeleteModalOpen(false)}
           title="Xác nhận Xóa Lớp học phần"
+          hideFooter={true}
         >
           <div className="flex flex-col gap-4">
             <div className="flex items-start gap-3 p-4 bg-error-container/30 rounded-xl text-error">

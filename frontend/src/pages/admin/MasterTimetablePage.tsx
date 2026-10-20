@@ -36,8 +36,11 @@ import {
   Info,
   ShieldAlert,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useAuthStore } from '../../store/auth-store';
 import {
   getTimetableSlotsApi,
+  getMyTimetableApi,
   createTimetableSlotApi,
   updateTimetableSlotApi,
   deleteTimetableSlotApi,
@@ -50,6 +53,19 @@ import { getSemestersApi } from '../../api/semesters.api';
 import { getClassSummariesApi } from '../../api/classes.api';
 import { getRoomsApi } from '../../api/facilities.api';
 import { getUsersApi } from '../../api/users.api';
+import {
+  getMondayOfWeek,
+  getSundayOfWeek,
+  getNextWeekMonday,
+  getPrevWeekMonday,
+  getCurrentWeekMonday,
+  getWeekDays,
+  formatLocalDateToYMD,
+  formatLocalDateToDMY,
+  parseYMDToLocalDate,
+  calculateSemesterWeekNumber,
+  isWeekWithinSemester,
+} from '../../utils/timetable-date.utils';
 import {
   TimetableSlotResponse,
   TimetableSlotCreateRequest,
@@ -87,19 +103,22 @@ const DAYS_OF_WEEK = [
   { index: 4, label: 'Thứ Năm', dayName: 'Thứ Năm' },
   { index: 5, label: 'Thứ Sáu', dayName: 'Thứ Sáu' },
   { index: 6, label: 'Thứ Bảy', dayName: 'Thứ Bảy' },
+  { index: 7, label: 'Chủ Nhật', dayName: 'Chủ Nhật' },
 ];
 
 export const MasterTimetablePage: React.FC = () => {
+  // User role checking for strict RBAC
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === 'ADMIN';
+  const isLecturer = user?.role === 'LECTURER';
+  const isStudent = user?.role === 'STUDENT';
+
   // Navigation & View Mode
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
 
-  // Week Management
-  const [currentWeekDate, setCurrentWeekDate] = useState<Date>(() => {
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
-    return new Date(now.setDate(diff));
-  });
+  // Week Management - Local calendar Monday at noon
+  const [currentWeekDate, setCurrentWeekDate] = useState<Date>(() => getCurrentWeekMonday());
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   // Data Collections
   const [semesters, setSemesters] = useState<SemesterResponse[]>([]);
@@ -156,51 +175,23 @@ export const MasterTimetablePage: React.FC = () => {
     }, 4000);
   };
 
-  // Helper date calculations
-  const weekStart = useMemo(() => {
-    const d = new Date(currentWeekDate);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    d.setDate(diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, [currentWeekDate]);
+  // Helper date calculations with 7 days and zero UTC offset
+  const weekStart = useMemo(() => getMondayOfWeek(currentWeekDate), [currentWeekDate]);
+  const weekEnd = useMemo(() => getSundayOfWeek(weekStart), [weekStart]);
+  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
 
-  const weekEnd = useMemo(() => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + 6);
-    d.setHours(23, 59, 59, 999);
-    return d;
-  }, [weekStart]);
-
-  const weekDays = useMemo(() => {
-    return Array.from({ length: 6 }).map((_, i) => {
-      const d = new Date(weekStart);
-      d.setDate(d.getDate() + i);
-      const iso = d.toISOString().split('T')[0];
-      const dayFormatted = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-      return {
-        date: d,
-        isoDate: iso,
-        dayIndex: i + 1,
-        formatted: dayFormatted,
-        label: DAYS_OF_WEEK[i]?.label || `Thứ ${i + 2}`,
-      };
-    });
-  }, [weekStart]);
-
-  const formatDateYMD = (d: Date) => d.toISOString().split('T')[0];
-  const formatDateDMY = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  const formatDateYMD = formatLocalDateToYMD;
+  const formatDateDMY = formatLocalDateToDMY;
 
   // 1. Fetch initial catalogs (Semesters, Class summaries, Rooms, Lecturers)
   useEffect(() => {
     const loadCatalogs = async () => {
       try {
-        const [semRes, roomsRes, usersRes] = await Promise.all([
-          getSemestersApi({ size: 50 }),
-          getRoomsApi({ size: 100 }),
-          getUsersApi({ role: 'LECTURER', size: 100 }),
-        ]);
+        const semPromise = getSemestersApi({ size: 50 });
+        const roomsPromise = getRoomsApi({ size: 100 });
+        const usersPromise = isAdmin ? getUsersApi({ role: 'LECTURER', size: 100 }) : Promise.resolve(null);
+
+        const [semRes, roomsRes, usersRes] = await Promise.all([semPromise, roomsPromise, usersPromise]);
 
         if (semRes.success && semRes.data?.content) {
           setSemesters(semRes.data.content);
@@ -214,7 +205,7 @@ export const MasterTimetablePage: React.FC = () => {
           setRooms(roomsRes.data.content);
         }
 
-        if (usersRes.success && usersRes.data?.content) {
+        if (usersRes && usersRes.success && usersRes.data?.content) {
           setLecturers(usersRes.data.content);
         }
       } catch (err: any) {
@@ -223,7 +214,7 @@ export const MasterTimetablePage: React.FC = () => {
     };
 
     loadCatalogs();
-  }, []);
+  }, [isAdmin]);
 
   // 2. Fetch class summaries when semester changes
   useEffect(() => {
@@ -238,7 +229,7 @@ export const MasterTimetablePage: React.FC = () => {
     }
   }, [selectedSemesterId]);
 
-  // 3. Fetch Timetable Slots for current week & filters
+  // 3. Fetch Timetable Slots for current week & filters (Role-Scoped)
   const loadTimetable = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -247,24 +238,34 @@ export const MasterTimetablePage: React.FC = () => {
     const endIso = formatDateYMD(weekEnd);
 
     try {
-      const [slotsRes, statsRes] = await Promise.all([
-        getTimetableSlotsApi({
-          startDate: startIso,
-          endDate: endIso,
-          semesterId: selectedSemesterId || undefined,
-          lecturerId: selectedLecturerId ? Number(selectedLecturerId) : undefined,
-        }),
-        getTimetableStatsApi(selectedSemesterId || undefined, startIso),
-      ]);
+      if (isAdmin) {
+        const [slotsRes, statsRes] = await Promise.all([
+          getTimetableSlotsApi({
+            startDate: startIso,
+            endDate: endIso,
+            semesterId: selectedSemesterId || undefined,
+            lecturerId: selectedLecturerId ? Number(selectedLecturerId) : undefined,
+          }),
+          getTimetableStatsApi(selectedSemesterId || undefined, startIso),
+        ]);
 
-      if (slotsRes.success && Array.isArray(slotsRes.data)) {
-        setSlots(slotsRes.data);
+        if (slotsRes.success && Array.isArray(slotsRes.data)) {
+          setSlots(slotsRes.data);
+        } else {
+          setSlots([]);
+        }
+
+        if (statsRes.success && statsRes.data) {
+          setStats(statsRes.data);
+        }
       } else {
-        setSlots([]);
-      }
-
-      if (statsRes.success && statsRes.data) {
-        setStats(statsRes.data);
+        // LECTURER or STUDENT: Call role-scoped personal timetable API (/me)
+        const meRes = await getMyTimetableApi(startIso, endIso);
+        if (meRes.success && Array.isArray(meRes.data)) {
+          setSlots(meRes.data);
+        } else {
+          setSlots([]);
+        }
       }
     } catch (err: any) {
       console.error('Error loading timetable:', err);
@@ -272,7 +273,7 @@ export const MasterTimetablePage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [weekStart, weekEnd, selectedSemesterId, selectedLecturerId]);
+  }, [weekStart, weekEnd, selectedSemesterId, selectedLecturerId, isAdmin]);
 
   useEffect(() => {
     loadTimetable();
@@ -283,24 +284,23 @@ export const MasterTimetablePage: React.FC = () => {
     return slots.filter((s) => s.hasConflict);
   }, [slots]);
 
-  // Navigate week
+  // Navigate week (+/- 7 days, current week, and specific date picker)
   const handlePrevWeek = () => {
-    const next = new Date(weekStart);
-    next.setDate(next.getDate() - 7);
-    setCurrentWeekDate(next);
+    setCurrentWeekDate((prev) => getPrevWeekMonday(prev));
   };
 
   const handleNextWeek = () => {
-    const next = new Date(weekStart);
-    next.setDate(next.getDate() + 7);
-    setCurrentWeekDate(next);
+    setCurrentWeekDate((prev) => getNextWeekMonday(prev));
   };
 
   const handleCurrentWeek = () => {
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    setCurrentWeekDate(new Date(now.setDate(diff)));
+    setCurrentWeekDate(getCurrentWeekMonday());
+  };
+
+  const handleSelectDate = (dateStr: string) => {
+    if (!dateStr) return;
+    const picked = parseYMDToLocalDate(dateStr);
+    setCurrentWeekDate(getMondayOfWeek(picked));
   };
 
   // Scroll to collision anchor
@@ -527,71 +527,103 @@ export const MasterTimetablePage: React.FC = () => {
     return semesters.find((s) => s.id === selectedSemesterId);
   }, [semesters, selectedSemesterId]);
 
+  // Semester week number calculation
+  const weekNumber = useMemo(() => {
+    return calculateSemesterWeekNumber(weekStart, currentSemesterObj?.startDate);
+  }, [weekStart, currentSemesterObj?.startDate]);
+
+  const isWithinSemester = useMemo(() => {
+    return isWeekWithinSemester(
+      weekStart,
+      weekEnd,
+      currentSemesterObj?.startDate,
+      currentSemesterObj?.endDate
+    );
+  }, [weekStart, weekEnd, currentSemesterObj?.startDate, currentSemesterObj?.endDate]);
+
   return (
     <div className="flex flex-col w-full pb-12 font-sans">
       {/* 1. BREADCRUMB & HEADER SECTION */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
           <div className="flex items-center gap-1.5 text-slate-500 text-xs font-semibold mb-1">
-            <span>Quản trị hệ thống</span>
+            <span>{isAdmin ? 'Quản trị hệ thống' : isLecturer ? 'Cổng Giảng viên' : 'Cổng Sinh viên'}</span>
             <span className="text-slate-400">/</span>
-            <span>Đào tạo &amp; Học vụ</span>
+            <span>{isAdmin ? 'Đào tạo & Học vụ' : 'Học tập & Giảng dạy'}</span>
             <span className="text-slate-400">/</span>
             <span className="text-blue-700 font-bold">Thời khóa biểu</span>
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-              Quản lý Thời khóa biểu &amp; Phân bổ giảng đường
+              {isAdmin
+                ? 'Quản lý Thời khóa biểu & Phân bổ giảng đường'
+                : isLecturer
+                ? 'Lịch giảng dạy & Thời khóa biểu'
+                : 'Thời khóa biểu sinh viên'}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold flex items-center gap-1.5 shadow-sm">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Đang hiệu chỉnh
+              {isAdmin ? 'Đang hiệu chỉnh' : 'Chính thức'}
             </span>
           </div>
         </div>
 
         {/* Action Button Group */}
         <div className="flex items-center flex-wrap gap-2.5">
-          <button
-            type="button"
-            onClick={() => showToast('Nhập Excel', 'Tính năng nhập Excel đã sẵn sàng.', 'success')}
-            className="h-10 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
-          >
-            <Upload className="w-4 h-4 text-slate-500" />
-            <span>Nhập Excel (.xlsx)</span>
-          </button>
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => showToast('Nhập Excel', 'Tính năng nhập Excel đã sẵn sàng.', 'success')}
+                className="h-10 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+              >
+                <Upload className="w-4 h-4 text-slate-500" />
+                <span>Nhập Excel (.xlsx)</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => showToast('Xuất dữ liệu', 'Đang tải file Excel thời khóa biểu...', 'success')}
-            className="h-10 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
-          >
-            <Download className="w-4 h-4 text-slate-500" />
-            <span>Xuất dữ liệu</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => showToast('Xuất dữ liệu', 'Đang tải file Excel thời khóa biểu...', 'success')}
+                className="h-10 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+              >
+                <Download className="w-4 h-4 text-slate-500" />
+                <span>Xuất dữ liệu</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => openSlotModal('create')}
-            className="h-10 px-3.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Thêm tiết học</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => openSlotModal('create')}
+                className="h-10 px-3.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Thêm tiết học</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setIsPublishModalOpen(true)}
-            className="h-10 px-4 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-md shadow-blue-700/20 flex items-center gap-1.5 transition"
-          >
-            <Rocket className="w-4 h-4" />
-            <span>Công bố TKB</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => setIsPublishModalOpen(true)}
+                className="h-10 px-4 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-md shadow-blue-700/20 flex items-center gap-1.5 transition"
+              >
+                <Rocket className="w-4 h-4" />
+                <span>Công bố TKB</span>
+              </button>
+            </>
+          )}
+
+          {isLecturer && (
+            <Link
+              to="/lecturer/attendance/sessions"
+              className="h-10 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Quản lý phiên điểm danh</span>
+            </Link>
+          )}
         </div>
       </div>
 
-      {/* 2. COLLISION WARNING BANNER (Matching Stitch) */}
-      {activeConflicts.length > 0 && (
+      {/* 2. COLLISION WARNING BANNER (Matching Stitch - Admin Only) */}
+      {isAdmin && activeConflicts.length > 0 && (
         <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-red-900 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative overflow-hidden">
           <div className="flex items-start gap-3.5">
             <div className="w-10 h-10 rounded-lg bg-red-100 text-red-700 flex items-center justify-center shrink-0 mt-0.5">
@@ -650,38 +682,75 @@ export const MasterTimetablePage: React.FC = () => {
 
             <div className="h-8 w-px bg-slate-200 hidden sm:block"></div>
 
-            {/* Điều hướng tuần */}
+            {/* Điều hướng tuần theo chuẩn Google Stitch */}
             <div className="flex flex-col">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-                TUẦN HỌC HIỆN TẠI
-              </span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  TUẦN HỌC HIỆN TẠI
+                </span>
+                {!isWithinSemester && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 ml-2">
+                    Ngoài khung kỳ học
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 p-1 rounded-lg">
                 <button
                   type="button"
                   onClick={handlePrevWeek}
-                  title="Tuần trước"
-                  className="w-8 h-8 rounded flex items-center justify-center hover:bg-white text-slate-600 transition"
+                  title="Tuần trước (Lùi 7 ngày)"
+                  className="w-8 h-8 rounded flex items-center justify-center hover:bg-white text-slate-600 hover:text-slate-900 transition shadow-sm"
+                  aria-label="Tuần trước"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
-                <div className="px-2 flex items-center gap-2 text-xs font-bold text-slate-800">
-                  <Calendar className="w-4 h-4 text-blue-700" />
-                  <span>
-                    ({formatDateDMY(weekStart)} - {formatDateDMY(weekEnd)})
-                  </span>
+
+                <div className="relative flex items-center">
+                  <input
+                    type="date"
+                    ref={dateInputRef}
+                    value={formatLocalDateToYMD(weekStart)}
+                    onChange={(e) => handleSelectDate(e.target.value)}
+                    className="sr-only"
+                    aria-label="Chọn ngày xem thời khóa biểu"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        dateInputRef.current?.showPicker();
+                      } catch {
+                        dateInputRef.current?.focus();
+                      }
+                    }}
+                    title="Nhấp để mở bộ chọn ngày theo lịch"
+                    className="px-2.5 py-1 rounded hover:bg-white flex items-center gap-2 text-xs text-slate-800 transition"
+                  >
+                    <Calendar className="w-4 h-4 text-blue-700 shrink-0" />
+                    <span className="font-bold text-slate-900">
+                      {weekNumber && weekNumber > 0 ? `Tuần ${weekNumber}` : 'Tuần học'}
+                    </span>
+                    <span className="text-slate-500 font-normal text-[11px]">
+                      ({formatLocalDateToDMY(weekStart)} - {formatLocalDateToDMY(weekEnd)})
+                    </span>
+                  </button>
                 </div>
+
                 <button
                   type="button"
                   onClick={handleNextWeek}
-                  title="Tuần sau"
-                  className="w-8 h-8 rounded flex items-center justify-center hover:bg-white text-slate-600 transition"
+                  title="Tuần sau (Tiến 7 ngày)"
+                  className="w-8 h-8 rounded flex items-center justify-center hover:bg-white text-slate-600 hover:text-slate-900 transition shadow-sm"
+                  aria-label="Tuần sau"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
+
                 <button
                   type="button"
                   onClick={handleCurrentWeek}
-                  className="ml-1 px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-bold transition"
+                  title="Quay lại tuần hiện tại"
+                  className="ml-1 px-2.5 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-bold transition"
                 >
                   Hiện tại
                 </button>
@@ -814,9 +883,9 @@ export const MasterTimetablePage: React.FC = () => {
       {/* 5. VIEW 1: WEEK CALENDAR GRID VIEW */}
       {viewMode === 'grid' && (
         <div className="w-full bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-x-auto pb-2">
-          <div className="min-w-[1180px]">
-            {/* Grid Header (Days of week) */}
-            <div className="grid grid-cols-[130px_repeat(6,1fr)] bg-slate-50 border-b border-slate-200 text-slate-800 text-xs font-bold">
+          <div className="min-w-[1280px]">
+            {/* Grid Header (7 Days: Thứ Hai to Chủ Nhật) */}
+            <div className="grid grid-cols-[130px_repeat(7,1fr)] bg-slate-50 border-b border-slate-200 text-slate-800 text-xs font-bold">
               <div className="p-3.5 flex flex-col justify-center items-center bg-slate-100 border-r border-slate-200">
                 <span className="text-[10px] font-bold text-slate-500 uppercase">CA / TIẾT</span>
                 <span className="text-xs font-bold text-slate-800 mt-0.5">Khung giờ</span>
@@ -824,23 +893,33 @@ export const MasterTimetablePage: React.FC = () => {
 
               {weekDays.map((wd) => {
                 const hasConflictOnDay = activeConflicts.some((c) => c.date === wd.isoDate);
+                const isToday = wd.isoDate === formatLocalDateToYMD(new Date());
                 return (
                   <div
                     key={wd.dayIndex}
                     className={`p-3 text-center border-r border-slate-200 last:border-r-0 ${
-                      hasConflictOnDay ? 'bg-red-50/60' : 'bg-white'
+                      hasConflictOnDay
+                        ? 'bg-red-50/60'
+                        : isToday
+                        ? 'bg-blue-50/60'
+                        : 'bg-white'
                     }`}
                   >
-                    <span
-                      className={`text-[10px] uppercase font-bold block ${
-                        hasConflictOnDay ? 'text-red-700' : 'text-slate-500'
-                      }`}
-                    >
-                      {wd.label}
-                    </span>
+                    <div className="flex items-center justify-center gap-1">
+                      <span
+                        className={`text-[10px] uppercase font-bold block ${
+                          hasConflictOnDay ? 'text-red-700' : isToday ? 'text-blue-700 font-extrabold' : 'text-slate-500'
+                        }`}
+                      >
+                        {wd.label}
+                      </span>
+                      {isToday && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" title="Hôm nay" />
+                      )}
+                    </div>
                     <span
                       className={`text-sm font-bold ${
-                        hasConflictOnDay ? 'text-red-800' : 'text-slate-900'
+                        hasConflictOnDay ? 'text-red-800' : isToday ? 'text-blue-900 font-extrabold' : 'text-slate-900'
                       }`}
                     >
                       {wd.formatted}
@@ -898,7 +977,7 @@ export const MasterTimetablePage: React.FC = () => {
                   <th className="p-3.5 text-center">Sĩ số</th>
                   <th className="p-3.5">Thiết bị AI / Điểm danh</th>
                   <th className="p-3.5">Trạng thái</th>
-                  <th className="p-3.5 text-right">Tác vụ</th>
+                  <th className="p-3.5 text-right">{isAdmin ? 'Tác vụ' : 'Hành động'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -952,16 +1031,29 @@ export const MasterTimetablePage: React.FC = () => {
                         )}
                       </td>
                       <td className="p-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => openSlotModal('edit', s)}
-                            className="p-1 rounded hover:bg-slate-100 text-slate-600 hover:text-blue-700 transition"
-                            title="Chỉnh sửa"
+                        {isAdmin && (
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openSlotModal('edit', s)}
+                              className="p-1 rounded hover:bg-slate-100 text-slate-600 hover:text-blue-700 transition"
+                              title="Chỉnh sửa"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                        {isLecturer && (
+                          <Link
+                            to="/lecturer/attendance/sessions"
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded transition"
                           >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                        </div>
+                            <span>Điểm danh</span>
+                          </Link>
+                        )}
+                        {isStudent && (
+                          <span className="text-slate-500 text-[11px]">Đã ghi danh</span>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -1433,7 +1525,7 @@ export const MasterTimetablePage: React.FC = () => {
   // Sub-renderer for Shift Row in Week Grid
   function renderShiftRow(shift: ShiftRowConfig) {
     return (
-      <div key={shift.id} className="grid grid-cols-[130px_repeat(6,1fr)] min-h-[150px] border-b border-slate-200">
+      <div key={shift.id} className="grid grid-cols-[130px_repeat(7,1fr)] min-h-[150px] border-b border-slate-200">
         {/* Time Axis Column */}
         <div className="bg-slate-50 p-2.5 flex flex-col justify-center items-center text-center border-r border-slate-200">
           <span className="text-xs font-bold text-slate-900">{shift.label}</span>
@@ -1441,7 +1533,7 @@ export const MasterTimetablePage: React.FC = () => {
           <span className="text-[10px] text-slate-400 mt-1">{shift.duration}</span>
         </div>
 
-        {/* 6 Days Cells */}
+        {/* 7 Days Cells: Thứ Hai to Chủ Nhật */}
         {weekDays.map((wd) => {
           // Find slots matching this day and this shift period range
           const cellSlots = slots.filter((s) => {
@@ -1486,16 +1578,18 @@ export const MasterTimetablePage: React.FC = () => {
                       ))}
                     </div>
 
-                    <div className="mt-2 flex items-center gap-1 justify-end">
-                      <button
-                        type="button"
-                        onClick={() => openSlotModal('edit', cellSlots[0])}
-                        className="px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 flex items-center gap-1 w-full justify-center shadow-sm"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        <span>Đổi phòng / Đổi GV</span>
-                      </button>
-                    </div>
+                    {isAdmin && (
+                      <div className="mt-2 flex items-center gap-1 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openSlotModal('edit', cellSlots[0])}
+                          className="px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 flex items-center gap-1 w-full justify-center shadow-sm"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Đổi phòng / Đổi GV</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1511,8 +1605,10 @@ export const MasterTimetablePage: React.FC = () => {
                 className="p-1.5 bg-white hover:bg-slate-50 transition border-r border-slate-200 last:border-r-0 relative group"
               >
                 <div
-                  onClick={() => openSlotModal('edit', slot)}
-                  className="h-full w-full rounded-lg bg-white border border-slate-200/90 p-2.5 shadow-sm hover:shadow-md cursor-pointer transition flex flex-col justify-between"
+                  onClick={() => isAdmin && openSlotModal('edit', slot)}
+                  className={`h-full w-full rounded-lg bg-white border border-slate-200/90 p-2.5 shadow-sm transition flex flex-col justify-between ${
+                    isAdmin ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
+                  }`}
                 >
                   <div>
                     <div className="flex items-center justify-between gap-1 mb-1">
@@ -1551,20 +1647,36 @@ export const MasterTimetablePage: React.FC = () => {
                       {slot.currentEnrollment} SV
                     </span>
                   </div>
+
+                  {isLecturer && (
+                    <div className="mt-1 pt-1 border-t border-dashed border-slate-100 flex justify-end">
+                      <Link
+                        to="/lecturer/attendance/sessions"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded transition"
+                      >
+                        Vào điểm danh &rarr;
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             );
           }
 
-          // Empty cell: hover '+' button to add slot
+          // Empty cell: if admin, hover '+' button to add slot
           return (
             <div
               key={wd.dayIndex}
-              onClick={() => openSlotModal('create', undefined, wd.dayIndex, shift.startPeriod, shift.endPeriod)}
-              className="p-1.5 bg-white hover:bg-blue-50/40 transition cursor-pointer flex items-center justify-center group border-r border-slate-200 last:border-r-0"
-              title={`Nhấp để thêm tiết học vào ${wd.label} (${shift.label})`}
+              onClick={() => isAdmin && openSlotModal('create', undefined, wd.dayIndex, shift.startPeriod, shift.endPeriod)}
+              className={`p-1.5 bg-white transition flex items-center justify-center group border-r border-slate-200 last:border-r-0 ${
+                isAdmin ? 'hover:bg-blue-50/40 cursor-pointer' : 'cursor-default'
+              }`}
+              title={isAdmin ? `Nhấp để thêm tiết học vào ${wd.label} (${shift.label})` : undefined}
             >
-              <Plus className="w-5 h-5 text-slate-300 group-hover:text-blue-600 group-hover:scale-110 transition-all opacity-0 group-hover:opacity-100" />
+              {isAdmin && (
+                <Plus className="w-5 h-5 text-slate-300 group-hover:text-blue-600 group-hover:scale-110 transition-all opacity-0 group-hover:opacity-100" />
+              )}
             </div>
           );
         })}

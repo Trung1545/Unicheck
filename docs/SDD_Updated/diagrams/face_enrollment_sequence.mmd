@@ -1,0 +1,37 @@
+sequenceDiagram
+  autonumber
+  actor Student as Sinh viên (Student)
+  participant App as Flutter App (face_enrollment_view)
+  participant MLKit as Google ML Kit (Euler Angles)
+  participant Backend as Spring Boot (/api/students/face-enrollment)
+  participant AI as Flask AI Service (/api/v1/ai/extract-embedding)
+  participant DB as PostgreSQL 15 (student_face_data)
+
+  Student->>App: Mở màn hình đăng ký khuôn mặt
+  App->>MLKit: Khởi động camera và phát hiện góc đầu thời gian thực
+
+  rect rgb(240, 248, 255)
+    Note over App,MLKit: Bước 1: Nhìn thẳng (Yaw, Pitch trong khoảng [-10°, 10°])
+    MLKit-->>App: Giữ góc hợp lệ trong 1.5s -> Chụp Frame 1 (Trực diện)
+  end
+
+  rect rgb(240, 255, 240)
+    Note over App,MLKit: Bước 2: Quay trái (Yaw < -15°)
+    MLKit-->>App: Giữ góc hợp lệ trong 1.5s -> Chụp Frame 2 (Nghiêng trái)
+  end
+
+  rect rgb(255, 245, 238)
+    Note over App,MLKit: Bước 3: Quay phải (Yaw > 15°)
+    MLKit-->>App: Giữ góc hợp lệ trong 1.5s -> Chụp Frame 3 (Nghiêng phải)
+  end
+
+  App->>Backend: POST /api/students/face-enrollment (Multipart 3 frames + JWT)
+  Backend->>AI: POST /api/v1/ai/extract-embedding (3 frames)
+  AI->>AI: YuNet phát hiện mặt + ArcFace trích xuất 3 vector 512D
+  AI->>AI: Tính vector trung bình chuẩn hóa L2 (512 chiều float32)
+  AI-->>Backend: JSON: { status: "SUCCESS", embedding: [float32 x 512] }
+  Backend->>Backend: Đóng gói thành chuỗi nhị phân BYTEA 2048 bytes (Little-Endian)
+  Backend->>DB: INSERT/UPDATE student_face_data (face_embedding = BYTEA, face_image = NULL)
+  DB-->>Backend: Commit thành công
+  Backend-->>App: HTTP 200 OK: Đăng ký khuôn mặt thành công
+  App->>Student: Thông báo hoàn tất và cập nhật trạng thái hồ sơ

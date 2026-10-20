@@ -1,0 +1,79 @@
+@startuml Web_Package_Diagram_UniCheck
+title Web Frontend Package Diagram - UniCheck (React 18.3, TypeScript 5.6)
+skinparam packageStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+package "UniCheck Web Frontend (src/)" {
+  package "pages" {
+    package "admin" {
+      [UserManagementPage]
+      [StudentManagementPage]
+      [LecturerManagementPage]
+      [RoomManagementPage]
+      [CourseManagementPage]
+      [SemesterManagementPage]
+      [ClassManagementPage]
+      [AttendanceConfigPage]
+    }
+    package "lecturer" {
+      [LecturerDashboardPage]
+      [LecturerAttendancePage]
+      [AttendanceSessionPage]
+      [AttendanceReportPage]
+      [TimetablePage]
+    }
+    package "common" {
+      [LoginPage]
+      [NotFoundPage]
+      [ProfilePage]
+    }
+  }
+
+  package "components" {
+    package "common-ui" {
+      [Button, Modal, Input, Table, Card, Badge, Alert, Spinner, Select, Checkbox]
+    }
+    package "layout" {
+      [AdminLayout, LecturerLayout, Header, Sidebar, Footer]
+    }
+    package "attendance" {
+      [SessionControlCard, StudentAttendanceTable, RealtimeStatusBadge]
+    }
+  }
+
+  package "stores (Zustand 5)" {
+    [useAuthStore]
+    [useSessionStore]
+    [useNotificationStore]
+  }
+
+  package "services (API Clients - Axios)" {
+    [authApi]
+    [userApi]
+    [studentApi]
+    [lecturerApi]
+    [courseApi]
+    [semesterApi]
+    [classSectionApi]
+    [scheduleApi]
+    [attendanceApi]
+    [roomApi]
+  }
+
+  package "routes" {
+    [AppRoutes]
+    [ProtectedRoute (Role-Based: ADMIN, LECTURER)]
+  }
+
+  package "types" {
+    [AuthTypes, UserTypes, AcademicTypes, AttendanceTypes, ApiResponse]
+  }
+}
+
+pages ..> components : render
+pages ..> stores : state binding
+pages ..> services : call REST endpoints
+routes ..> pages : route navigation
+routes ..> stores : check auth & role
+services ..> types : payload mapping
+@enduml

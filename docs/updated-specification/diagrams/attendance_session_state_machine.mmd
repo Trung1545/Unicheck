@@ -1,0 +1,36 @@
+stateDiagram-v2
+    [*] --> CREATED : Giảng viên/Admin khởi tạo phiên gắn với Ca học (TimetableSlot)
+
+    CREATED --> OPEN : Giảng viên/Admin bấm "Mở phiên điểm danh"\n[Kiểm tra ngày học, lớp học và quyền phụ trách]
+    CREATED --> CANCELLED : Hủy phiên trước khi bắt đầu (Không có ca học)
+
+    state OPEN {
+        [*] --> AcceptingCheckins
+        AcceptingCheckins --> ProcessingBiometrics : Sinh viên quét khuôn mặt Face-ID
+        ProcessingBiometrics --> AcceptingCheckins : Ghi nhận kết quả (Có mặt / Đi trễ)
+        AcceptingCheckins --> PollingStatus : Client Mobile / Web kiểm tra trạng thái phiên
+    }
+
+    OPEN --> CLOSED : Giảng viên/Admin bấm "Chốt sổ phiên điểm danh"\n(Cập nhật closed_at = NOW, tính toán KPI sĩ số)
+    OPEN --> CLOSED : Hết thời gian mở phiên tự động (Timeout)
+
+    CLOSED --> [*] : Phiên đóng vĩnh viễn (Bảo toàn nguyên vẹn mọi bản ghi student_attendances)
+
+    note right of CREATED
+        - Trạng thái khởi tạo mặc định
+        - Sinh viên chưa thể điểm danh
+        - Cho phép chỉnh sửa cấu hình phương thức
+    end note
+
+    note right of OPEN
+        - Chấp nhận điểm danh qua Face-ID & QR động
+        - Đếm tổng số sinh viên có mặt / trễ thời gian thực
+        - Ngăn chặn khởi tạo phiên thứ hai cho cùng ca học (V7 Unique)
+    end note
+
+    note right of CLOSED
+        - Trạng thái bất biến (Immutable State)
+        - Tuyệt đối không cho phép chuyển ngược CLOSED -> OPEN
+        - Khóa toàn bộ thao tác điểm danh từ sinh viên
+        - Giảng viên có thẩm quyền chỉnh sửa thủ công có ghi Audit Log
+    end note

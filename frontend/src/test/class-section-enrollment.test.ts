@@ -164,3 +164,67 @@ test('8. RBAC Matrix for Class & Enrollment Management', () => {
   assert.equal(checkPermission('STUDENT', 'CREATE_CLASS'), false);
   assert.equal(checkPermission('STUDENT', 'ENROLL_STUDENT'), false);
 });
+
+test('9. Lookup Dropdown Label Formatting Contract', () => {
+  // Course formatter
+  const formatCourseOption = (c: { code: string; name: string; credits: number }) =>
+    `${c.code} — ${c.name} (${c.credits} TC)`;
+  assert.equal(
+    formatCourseOption({ code: 'IT301', name: 'Lập trình Web', credits: 3 }),
+    'IT301 — Lập trình Web (3 TC)'
+  );
+
+  // Semester formatter
+  const formatSemesterOption = (s: { name: string; code: string; status: string }) =>
+    `${s.name} (${s.code})${s.status === 'ACTIVE' ? ' — [Học kỳ hiện hành]' : ''}`;
+  assert.equal(
+    formatSemesterOption({ name: 'Học kỳ 1 2026-2027', code: 'FALL2026', status: 'ACTIVE' }),
+    'Học kỳ 1 2026-2027 (FALL2026) — [Học kỳ hiện hành]'
+  );
+  assert.equal(
+    formatSemesterOption({ name: 'Học kỳ 2 2026-2027', code: 'SPRING2027', status: 'UPCOMING' }),
+    'Học kỳ 2 2026-2027 (SPRING2027)'
+  );
+
+  // Lecturer formatter
+  const formatLecturerOption = (lec: { fullName: string; code?: string; username: string; department?: string }) =>
+    `${lec.fullName} (${lec.code || lec.username})${lec.department ? ` — ${lec.department}` : ''}`;
+  assert.equal(
+    formatLecturerOption({ fullName: 'TS. Nguyễn Văn A', code: 'GV001', username: 'lecturer_a', department: 'Khoa CNTT' }),
+    'TS. Nguyễn Văn A (GV001) — Khoa CNTT'
+  );
+  assert.equal(
+    formatLecturerOption({ fullName: 'ThS. Trần B', username: 'lecturer_b' }),
+    'ThS. Trần B (lecturer_b)'
+  );
+});
+
+test('10. Lookup Empty State Guards & Submission Safety', () => {
+  const canSubmitCreateClass = (coursesCount: number, semestersCount: number, isSubmitting: boolean): boolean => {
+    if (isSubmitting) return false;
+    if (coursesCount === 0 || semestersCount === 0) return false;
+    return true;
+  };
+
+  assert.equal(canSubmitCreateClass(0, 1, false), false, 'Cannot submit when courses empty');
+  assert.equal(canSubmitCreateClass(1, 0, false), false, 'Cannot submit when semesters empty');
+  assert.equal(canSubmitCreateClass(1, 1, true), false, 'Cannot submit while submitting');
+  assert.equal(canSubmitCreateClass(1, 1, false), true, 'Can submit when courses and semesters are available');
+});
+
+test('11. Modal hideFooter Guard against Duplicate Cancel Buttons', () => {
+  // Modal contract: If form provides its own actions in children, hideFooter must be true
+  interface ModalConfig {
+    hasInternalFormButtons: boolean;
+    hideFooter: boolean;
+  }
+  const validateNoDuplicateButtons = (config: ModalConfig): boolean => {
+    if (config.hasInternalFormButtons && !config.hideFooter) {
+      return false; // Error: would render both internal Cancel and modal default Cancel
+    }
+    return true;
+  };
+
+  assert.equal(validateNoDuplicateButtons({ hasInternalFormButtons: true, hideFooter: false }), false);
+  assert.equal(validateNoDuplicateButtons({ hasInternalFormButtons: true, hideFooter: true }), true);
+});

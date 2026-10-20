@@ -122,7 +122,7 @@ public class AttendanceSessionController {
     /**
      * 7. Lấy thống kê KPI phiên điểm danh theo Stitch UI
      */
-    @GetMapping("/sessions/stats")
+    @GetMapping({"/sessions/stats", "/stats"})
     @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
     public ResponseEntity<ApiResponse<AttendanceSessionStatsResponse>> getStats(
             @AuthenticationPrincipal UserPrincipal principal,
@@ -136,7 +136,7 @@ public class AttendanceSessionController {
     /**
      * 8. Lấy danh sách điểm danh gần nhất phục vụ Live Activity Drawer
      */
-    @GetMapping("/sessions/{id}/recent-checkins")
+    @GetMapping({"/sessions/{id}/recent-checkins", "/sessions/{id}/attendances"})
     @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
     public ResponseEntity<ApiResponse<List<StudentAttendanceResponse>>> getRecentCheckIns(
             @AuthenticationPrincipal UserPrincipal principal,

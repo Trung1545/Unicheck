@@ -1,0 +1,44 @@
+@startuml Attendance_Session_State_Machine
+title State Machine Diagram - Attendance Session Lifecycle (UniCheck)
+skinparam state {
+  BackgroundColor #F8FAFC
+  BorderColor #334155
+  StartColor #16A34A
+  EndColor #DC2626
+}
+
+[*] --> SCHEDULED : Tạo lịch học / ca học\n(Auto created from ClassSchedule)
+
+state SCHEDULED {
+  SCHEDULED : Session chưa mở
+  SCHEDULED : Sinh viên chưa thể điểm danh
+}
+
+SCHEDULED --> ACTIVE : Giảng viên bấm "Mở phiên"\nhoặc Hệ thống tự mở trước ca học (early_open_minutes)\n[POST /api/attendance/sessions/{id}/open]
+
+state ACTIVE {
+  ACTIVE : Cửa sổ điểm danh đang mở
+  ACTIVE : Chấp nhận Face Check-in, GPS, WiFi
+  ACTIVE : Đếm sĩ số thời gian thực
+}
+
+ACTIVE --> COMPLETED : Giảng viên bấm "Đóng phiên"\nhoặc Hết giờ điểm danh theo cấu hình\n[POST /api/attendance/sessions/{id}/close]
+
+ACTIVE --> CANCELLED : Giảng viên hủy ca học đột xuất\n[POST /api/attendance/sessions/{id}/cancel]
+SCHEDULED --> CANCELLED : Giảng viên / Khoa báo nghỉ
+
+state COMPLETED {
+  COMPLETED : Phiên điểm danh kết thúc
+  COMPLETED : Tự động gán ABSENT_UNEXCUSED cho sinh viên chưa điểm danh
+  COMPLETED : Cho phép Giảng viên điều chỉnh thủ công (Manual Adjustment)
+  COMPLETED : Xuất báo cáo Excel thống kê chuyên cần
+}
+
+state CANCELLED {
+  CANCELLED : Buổi học bị hủy
+  CANCELLED : Không tính vào tỷ lệ vắng của sinh viên
+}
+
+COMPLETED --> [*]
+CANCELLED --> [*]
+@enduml
