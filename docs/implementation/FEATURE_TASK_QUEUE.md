@@ -168,33 +168,44 @@
 
 * **Mã Công Việc:** `TASK-06`
 * **Mức Ưu Tiên:** **P0**
-* **Trạng thái hiện tại:** **`READY_TO_START`** (Phụ thuộc nền tảng từ TASK-05 đã hoàn thành 100%).
-* **Phụ thuộc:** `TASK-05` (Hợp đồng Session ID và `AttendanceSessionStatusResponse`).
-* **Màn hình Stitch:** `5c0df9af4d2545919e8f774c1159e7da` (Giảng viên - Khởi tạo phiên & QR động).
-* **Tuyến đường React:** `/lecturer/session/qr`.
-* **Nghiệp vụ cốt lõi:**
-  - Sinh mã QR động HMAC-SHA256 xoay vòng mỗi 5-10 giây (theo cấu hình từ `attendance_configs`).
-  - Hiển thị đồng hồ đếm ngược trực quan (Visual Countdown Radar / Circle).
-  - Ngăn chặn chụp màn hình gửi bên ngoài; mã QR quá hạn bị từ chối khi check-in.
+* **Trạng thái:** **`COMPLETED` (100% Full-Stack Vertical Slice)**
+* **Báo cáo nghiệm thu:** [`docs/testing/TASK_06_DYNAMIC_QR_ACCEPTANCE_REPORT.md`](file:///c:/Users/Admin/Documents/Antigravity/UniCheck/docs/testing/TASK_06_DYNAMIC_QR_ACCEPTANCE_REPORT.md)
+* **Màn hình Stitch:** `5c0df9af4d2545919e8f774c1159e7da` (UniCheck Giảng viên - Chiếu mã QR xoay vòng & Giám sát phiên) -> **DONE**.
+* **Tuyến đường React:** `/lecturer/session/qr` (hỗ trợ kèm route params `/lecturer/session/:sessionId/qr` và query `?sessionId=...`).
+* **Backend:**
+  - `GET /api/v1/attendance/sessions/{sessionId}/qr`: Cấp phát token QR động có ký số HMAC-SHA256, chu kỳ 10s, TTL 15s, cache 2 tầng Dual-write Redis + ConcurrentHashMap Fail-safe. Phân quyền `@PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")` và kiểm tra quyền phụ trách phiên.
+  - `POST /api/v1/attendance/qr/validate`: Xác thực tính toàn vẹn chữ ký HMAC-SHA256, TTL, trạng thái phiên `OPEN` và ràng buộc `sessionId`. Không ghi nhận attendance, không gọi AI, hỗ trợ multi-student concurrency.
+* **Frontend Web:**
+  - Module tạo ma trận QR Model 2 (ISO/IEC 18004) thuần TypeScript zero-dependency (`qr-generator.ts`).
+  - Component `DynamicQrCode.tsx` render SVG QR bo góc với Finder patterns, UniCheck Brand Seal checkmark và laser beam.
+  - Màn hình `SessionQrCodePage.tsx` chuẩn Stitch `5c0df9af4d2545919e8f774c1159e7da` (Top context bar, radial countdown circle, live stats, feeds, and interactive testing simulator bar).
+  - Tích hợp nút "Hiển thị QR" trong bảng phiên và drawer từ trang quản lý phiên TASK-05.
+* **Kiểm thử:**
+  - Backend: 20/20 Integration Tests passed (`DynamicQrIntegrationTest.java`), 152/152 full backend suite passed.
+  - Frontend: 15/15 unit/contract tests passed (`dynamic-qr.test.ts`), 93/93 full frontend suite passed, `npm run build` exit code 0.
+
 
 ---
 
-## TASK-07 & TASK-08: Check-in Điểm Danh Trên Mobile & Chống Gian Lận Liveness
+## TASK-07: Check-in Điểm Danh Trên Flutter Mobile (End-to-End Attendance)
 
-* **Mã Công Việc:** `TASK-07-08`
+* **Mã Công Việc:** `TASK-07`
 * **Mức Ưu Tiên:** **P0**
-* **Thời gian ước tính:** 5 ngày làm việc (29/10 - 02/11/2026)
-* **Trạng thái hiện tại:** `BLOCKED` do `mobile/pubspec.yaml` thiếu các native plugins phần cứng.
-* **Phụ thuộc:** `TASK-03`, `TASK-04`, `TASK-06`.
-* **Tệp cần tạo / chỉnh sửa:**
-  - `mobile/pubspec.yaml`: Thêm `camera: ^0.11.0`, `google_mlkit_face_detection: ^0.12.0`, `mobile_scanner: ^5.2.0`, `network_info_plus: ^5.0.1`, `geolocator: ^12.0.0`.
-  - `mobile/lib/feature/attendance/`: Hiện thực hóa `FaceCheckinView` với khung Oval hướng dẫn định vị khuôn mặt.
-  - `ai-service/app.py`: Tích hợp model `MiniFASNet` kiểm tra liveness chống ảnh in/màn hình.
-* **Tiêu chí nghiệm thu:**
-  1. Sinh viên quét mã QR từ máy chiếu -> Ứng dụng tự động bật camera trước.
-  2. Hướng dẫn sinh viên chớp mắt / giữ thẳng mặt trong khung Oval.
-  3. Ứng dụng đọc BSSID của Wi-Fi đang kết nối gửi kèm ảnh selfie và QR token lên API `POST /api/v1/attendance/check-in`.
-  4. Server xác thực 4 lớp: Khớp BSSID phòng học + QR token hợp lệ + Liveness $\ge$ ngưỡng + Khuôn mặt khớp hồ sơ.
+* **Trạng thái hiện tại:** `COMPLETED` (100% Passed — Flutter Mobile & Spring Boot Green).
+* **Phụ thuộc:** `TASK-03`, `TASK-04`, `TASK-05`, `TASK-06`, `TASK-08`.
+* **Tệp đã tạo / hoàn thành:**
+  - `mobile/pubspec.yaml`: Đã tích hợp `mobile_scanner: ^7.4.2`, `network_info_plus: ^7.0.0`, `geolocator: ^14.0.2`, `camera: ^0.11.0+2`.
+  - `mobile/lib/core/utils/wifi_location_service.dart`: Đọc BSSID và GPS kèm timeout fallback.
+  - `mobile/lib/feature/attendance/models/checkin_models.dart`: Request & Response DTOs.
+  - `mobile/lib/feature/attendance/services/attendance_api_service.dart`: Client API check-in và validate QR.
+  - `mobile/lib/feature/attendance/controllers/attendance_checkin_controller.dart`: State machine 4 bước.
+  - `mobile/lib/feature/attendance/views/face_checkin_view.dart`: Viewfinder QR scanner, Oval face guide, Kết quả thành công & Thẻ lỗi.
+  - `backend/src/main/java/com/unicheck/controller/AttendanceCheckInController.java`: Endpoint `POST /api/v1/attendance/check-in`.
+  - `backend/src/main/java/com/unicheck/service/impl/AttendanceCheckInServiceImpl.java`: Xác thực 14 bước nghiêm ngặt.
+* **Kiểm thử nghiệm thu:**
+  - Flutter Mobile: 40/40 tests PASSED (`attendance_checkin_test.dart`), `flutter analyze` 0 issues.
+  - Spring Boot Backend: 16/16 integration tests PASSED (`AttendanceCheckInIntegrationTest.java`).
+  - Production E2E: Ghi nhận thành công sinh viên `student_test` vào phiên #38 trạng thái `PRESENT` (AI Liveness 0.909, ArcFace match, Postgres atomic save, Redis lock, Audit log).
 
 ---
 

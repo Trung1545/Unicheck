@@ -135,3 +135,33 @@ export const getAttendanceCheckInsApi = async (
 ): Promise<ApiResponse<StudentAttendanceResponse[]>> => {
   return apiClient.get(`/attendance/sessions/${sessionId}/recent-checkins`);
 };
+
+/**
+ * 11. Lấy mã QR xoay vòng cho phiên điểm danh OPEN (GET /api/v1/attendance/sessions/{id}/qr)
+ */
+export const getSessionQrTokenApi = async (
+  sessionId: number
+): Promise<ApiResponse<import('../types/attendance').QrTokenResponse>> => {
+  return apiClient.get(`/attendance/sessions/${sessionId}/qr`);
+};
+
+/**
+ * 12. Xác thực mã QR điểm danh (POST /api/v1/attendance/qr/validate)
+ */
+export const validateQrTokenApi = async (
+  request: import('../types/attendance').QrValidationRequest
+): Promise<ApiResponse<import('../types/attendance').QrValidationResponse>> => {
+  return apiClient.post('/attendance/qr/validate', request);
+};
+
+/**
+ * 13. Lấy lượt điểm danh gần đây cho Live Drawer (GET /api/v1/attendance/sessions/{id}/recent-checkins)
+ */
+export const getRecentCheckInsApi = async (
+  sessionId: number,
+  limit: number = 10
+): Promise<ApiResponse<StudentAttendanceResponse[]>> => {
+  return apiClient.get(`/attendance/sessions/${sessionId}/recent-checkins`, {
+    params: { limit },
+  });
+};

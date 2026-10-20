@@ -50,13 +50,19 @@ export interface AttendanceSessionStatusResponse {
 }
 
 export interface AttendanceSessionStatsResponse {
-  totalSessionsToday: number;
-  morningSessions: number;
-  afternoonSessions: number;
-  activeOpenSessions: number;
-  completedSessions: number;
-  onTimeRate: number;
-  abnormalSessions: number;
+  totalSessionsToday?: number;
+  totalToday?: number;
+  morningSessions?: number;
+  afternoonSessions?: number;
+  activeOpenSessions?: number;
+  openCount?: number;
+  completedSessions?: number;
+  closedCount?: number;
+  onTimeRate?: number;
+  attendanceRatePercentage?: number;
+  abnormalSessions?: number;
+  abnormalCount?: number;
+  upcomingCount?: number;
 }
 
 export interface AttendanceConfigDto {
@@ -108,4 +114,31 @@ export interface StudentAttendanceResponse {
   faceConfidence?: number | null;
   deviceInfo?: string | null;
   verifiedByKiosk?: string | null;
+}
+
+// TASK-06 Dynamic QR Types
+export interface QrTokenResponse {
+  sessionId: number;
+  qrToken: string;
+  issuedAt: string;
+  expiresAt: string;
+  rotationExpiresAt: string;
+  rotationIntervalSeconds: number;
+  remainingSeconds: number;
+  status: AttendanceSessionStatus;
+}
+
+export interface QrValidationRequest {
+  qrToken: string;
+  sessionId: number;
+}
+
+export interface QrValidationResponse {
+  valid: boolean;
+  sessionId: number;
+  className: string;
+  roomName: string;
+  issuedAt: string;
+  expiresAt: string;
+  message: string;
 }

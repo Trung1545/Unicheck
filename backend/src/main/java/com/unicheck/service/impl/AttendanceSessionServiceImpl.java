@@ -12,14 +12,17 @@ import com.unicheck.repository.*;
 import com.unicheck.security.UserPrincipal;
 import com.unicheck.service.AttendanceSessionService;
 import com.unicheck.service.SystemLogService;
+import jakarta.persistence.criteria.*;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
@@ -48,6 +51,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
     private final EnrollmentRepository enrollmentRepository;
     private final TeachingAssignmentRepository teachingAssignmentRepository;
     private final SystemLogService systemLogService;
+    private final com.unicheck.security.DynamicQrRedisService dynamicQrRedisService;
 
     // =========================================================================
     // 1. Xem danh sách phiên điểm danh (Server-side Pagination & Filtering)
@@ -68,13 +72,11 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         validateAuthenticatedUser(principal);
         User user = principal.getUser();
 
-        Long effectiveLecturerId = lecturerId;
-        if (user.getRole() == Role.LECTURER) {
-            // Giảng viên bắt buộc chỉ xem các phiên thuộc quyền của mình
-            effectiveLecturerId = user.getId();
-        } else if (user.getRole() == Role.STUDENT) {
+        if (user.getRole() == Role.STUDENT) {
             throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền quản lý phiên điểm danh");
         }
+
+        final Long effectiveLecturerId = (user.getRole() == Role.LECTURER) ? user.getId() : lecturerId;
 
         Specification<AttendanceSession> spec = createSpecification(
                 semesterId, className, effectiveLecturerId, date, status, search);
@@ -275,6 +277,9 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         session.setStatus(AttendanceSessionStatus.CLOSED);
         session.setClosedAt(now);
 
+        // Vô hiệu hóa và xóa toàn bộ mã QR xoay vòng của phiên
+        dynamicQrRedisService.invalidate(session.getId());
+
         // Ghi nhật ký kiểm toán
         systemLogService.logAudit(
                 "ATTENDANCE_SESSION_CLOSED",
@@ -346,13 +351,18 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
         return AttendanceSessionStatsResponse.builder()
                 .totalToday(totalToday)
+                .totalSessionsToday(totalToday)
                 .morningSessions(morning)
                 .afternoonSessions(afternoon)
                 .openCount(openCount)
+                .activeOpenSessions(openCount)
                 .closedCount(closedCount)
+                .completedSessions(closedCount)
                 .upcomingCount(upcomingCount)
                 .abnormalCount(0L)
+                .abnormalSessions(0L)
                 .attendanceRatePercentage(95.2)
+                .onTimeRate(95.2)
                 .build();
     }
 

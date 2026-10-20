@@ -40,6 +40,11 @@ security:
     secret: ${SECURITY_JWT_SECRET:${JWT_SECRET:}}
     expiration-ms: ${SECURITY_JWT_EXPIRATION:${JWT_EXPIRATION_MS:900000}}
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+  qr:
+    secret: ${SECURITY_QR_SECRET:${SECURITY_JWT_SECRET:${JWT_SECRET:}}}
+    rotation-seconds: ${QR_ROTATION_SECONDS:10}
+    ttl-seconds: ${QR_TTL_SECONDS:15}
+    clock-skew-seconds: ${QR_CLOCK_SKEW_SECONDS:2}
 
 ai-service:
   url: ${AI_SERVICE_URL:http://localhost:5000}

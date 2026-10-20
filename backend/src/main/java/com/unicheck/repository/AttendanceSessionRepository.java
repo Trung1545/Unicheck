@@ -37,18 +37,19 @@ public interface AttendanceSessionRepository extends JpaRepository<AttendanceSes
            "AND (:lecturerId IS NULL OR s.lecturer.id = :lecturerId OR cs.lecturer.id = :lecturerId) " +
            "AND (:date IS NULL OR ts.date = :date) " +
            "AND (:status IS NULL OR s.status = :status) " +
-           "AND (:search IS NULL OR LOWER(cs.className) LIKE LOWER(CONCAT('%', :search, '%')) " +
-           "     OR LOWER(c.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
-           "     OR LOWER(c.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
-           "     OR LOWER(r.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
-           "     OR LOWER(l.fullName) LIKE LOWER(CONCAT('%', :search, '%')))")
+           "AND (cast(:searchPattern as string) IS NULL " +
+           "     OR LOWER(cs.className) LIKE cast(:searchPattern as string) " +
+           "     OR LOWER(c.name) LIKE cast(:searchPattern as string) " +
+           "     OR LOWER(c.code) LIKE cast(:searchPattern as string) " +
+           "     OR LOWER(r.code) LIKE cast(:searchPattern as string) " +
+           "     OR LOWER(l.fullName) LIKE cast(:searchPattern as string))")
     Page<AttendanceSession> findSessionsWithFilter(
             @Param("semesterId") Long semesterId,
             @Param("className") String className,
             @Param("lecturerId") Long lecturerId,
             @Param("date") LocalDate date,
             @Param("status") AttendanceSessionStatus status,
-            @Param("search") String search,
+            @Param("searchPattern") String searchPattern,
             Pageable pageable
     );
 

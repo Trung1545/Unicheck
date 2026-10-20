@@ -18,6 +18,7 @@ import { MasterTimetablePage } from '../pages/admin/MasterTimetablePage';
 import { FaceRegistrationPage } from '../pages/student/FaceRegistrationPage';
 import { AttendanceSessionManagementPage } from '../pages/admin/AttendanceSessionManagementPage';
 import { AttendanceConfigPage } from '../pages/admin/AttendanceConfigPage';
+import { SessionQrCodePage } from '../pages/lecturer/SessionQrCodePage';
 import { MainLayout } from '../layouts/MainLayout';
 import { AuthLayout } from '../layouts/AuthLayout';
 import { useAuthStore } from '../store/auth-store';
@@ -441,6 +442,40 @@ export const AppRoutes: React.FC = () => {
           <ProtectedRoute>
             <MainLayout>
               <AttendanceSessionManagementPage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Dynamic QR Code Attendance (TASK-06 - Stitch 5c0df9af4d2545919e8f774c1159e7da) */}
+      <Route
+        path="/lecturer/session/qr"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <SessionQrCodePage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/lecturer/session/:sessionId/qr"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <SessionQrCodePage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/lecturer/sessions/:sessionId/qr"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <SessionQrCodePage />
             </MainLayout>
           </ProtectedRoute>
         }

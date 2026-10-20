@@ -186,8 +186,14 @@ export const NAVIGATION_CONFIG: Record<Role, NavSection[]> = {
       items: [
         {
           id: 'lecturer-qr-session',
-          label: 'Khởi tạo phiên & QR động',
+          label: 'Quản lý phiên điểm danh',
           path: '/lecturer/attendance-session',
+          icon: Calendar,
+        },
+        {
+          id: 'lecturer-qr-projection',
+          label: 'Mở phiên & QR xoay vòng',
+          path: '/lecturer/session/qr',
           icon: QrCode,
         },
         {

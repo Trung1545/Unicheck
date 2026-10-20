@@ -811,4 +811,42 @@ public class AttendanceSessionIntegrationTest {
                 .andExpect(jsonPath("$.data.totalAttendedStudents").value(0))
                 .andExpect(jsonPath("$.data.attendancePercentage").value(0.0));
     }
+
+    // =========================================================================
+    // TEST 20: Kiểm tra /attendances và /recent-checkins endpoint alias
+    // =========================================================================
+    @Test
+    @DisplayName("20. Kiểm tra /attendances và /recent-checkins alias endpoint hoạt động chính xác")
+    void testAttendancesAndRecentCheckInsAlias() throws Exception {
+        AttendanceSession session = attendanceSessionRepository.save(AttendanceSession.builder()
+                .timetableSlot(slot1)
+                .lecturer(lecturer)
+                .status(AttendanceSessionStatus.OPEN)
+                .openedAt(LocalDateTime.now().minusMinutes(5))
+                .build());
+
+        studentAttendanceRepository.save(StudentAttendance.builder()
+                .session(session)
+                .student(student)
+                .status("PRESENT")
+                .method("QR")
+                .checkInTime(LocalDateTime.now())
+                .faceConfidence(0.99)
+                .build());
+
+        // 1. Check /attendances
+        mockMvc.perform(get("/api/v1/attendance/sessions/" + session.getId() + "/attendances")
+                        .header("Authorization", "Bearer " + lecturerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].studentCode").value(student.getCode()))
+                .andExpect(jsonPath("$.data[0].status").value("PRESENT"));
+
+        // 2. Check /recent-checkins
+        mockMvc.perform(get("/api/v1/attendance/sessions/" + session.getId() + "/recent-checkins")
+                        .header("Authorization", "Bearer " + lecturerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].studentCode").value(student.getCode()));
+    }
 }

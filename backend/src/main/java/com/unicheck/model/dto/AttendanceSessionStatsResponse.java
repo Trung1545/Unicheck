@@ -11,36 +11,42 @@ import lombok.*;
 public class AttendanceSessionStatsResponse {
 
     private Long totalToday;
+    private Long totalSessionsToday;
     private Long morningSessions;
     private Long afternoonSessions;
     private Long openCount;
+    private Long activeOpenSessions;
     private Long closedCount;
+    private Long completedSessions;
     private Long upcomingCount;
     private Long abnormalCount;
+    private Long abnormalSessions;
     private Double attendanceRatePercentage;
+    private Double onTimeRate;
 
     @JsonProperty("totalSessionsToday")
     public Long getTotalSessionsToday() {
-        return totalToday != null ? totalToday : 0L;
+        return totalSessionsToday != null ? totalSessionsToday : (totalToday != null ? totalToday : 0L);
     }
 
     @JsonProperty("activeOpenSessions")
     public Long getActiveOpenSessions() {
-        return openCount != null ? openCount : 0L;
+        return activeOpenSessions != null ? activeOpenSessions : (openCount != null ? openCount : 0L);
     }
 
     @JsonProperty("completedSessions")
     public Long getCompletedSessions() {
-        return closedCount != null ? closedCount : 0L;
+        return completedSessions != null ? completedSessions : (closedCount != null ? closedCount : 0L);
     }
 
     @JsonProperty("abnormalSessions")
     public Long getAbnormalSessions() {
-        return abnormalCount != null ? abnormalCount : 0L;
+        return abnormalSessions != null ? abnormalSessions : (abnormalCount != null ? abnormalCount : 0L);
     }
 
     @JsonProperty("onTimeRate")
     public Double getOnTimeRate() {
+        if (onTimeRate != null) return onTimeRate;
         return attendanceRatePercentage != null ? attendanceRatePercentage : 100.0;
     }
 }
