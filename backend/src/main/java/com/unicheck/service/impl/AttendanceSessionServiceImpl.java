@@ -12,18 +12,22 @@ import com.unicheck.repository.*;
 import com.unicheck.security.UserPrincipal;
 import com.unicheck.service.AttendanceSessionService;
 import com.unicheck.service.SystemLogService;
+import jakarta.persistence.criteria.*;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -41,6 +45,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
     private final EnrollmentRepository enrollmentRepository;
     private final TeachingAssignmentRepository teachingAssignmentRepository;
     private final SystemLogService systemLogService;
+    private final com.unicheck.security.DynamicQrRedisService dynamicQrRedisService;
 
     // =========================================================================
     // 1. Xem danh sách phiên điểm danh (Server-side Pagination & Filtering)
@@ -61,16 +66,74 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         validateAuthenticatedUser(principal);
         User user = principal.getUser();
 
-        Long effectiveLecturerId = lecturerId;
-        if (user.getRole() == Role.LECTURER) {
-            // Giảng viên bắt buộc chỉ xem các phiên thuộc quyền của mình
-            effectiveLecturerId = user.getId();
-        } else if (user.getRole() == Role.STUDENT) {
+        if (user.getRole() == Role.STUDENT) {
             throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền quản lý phiên điểm danh");
         }
 
-        Page<AttendanceSession> sessionsPage = attendanceSessionRepository.findSessionsWithFilter(
-                semesterId, className, effectiveLecturerId, date, status, search, pageable);
+        final Long targetLecturerId = (user.getRole() == Role.LECTURER) ? user.getId() : lecturerId;
+
+        Specification<AttendanceSession> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            // Joins
+            Join<AttendanceSession, TimetableSlot> ts = root.join("timetableSlot", JoinType.INNER);
+            Join<TimetableSlot, ClassSection> cs = ts.join("classSection", JoinType.INNER);
+            Join<ClassSection, Course> course = cs.join("course", JoinType.LEFT);
+            Join<ClassSection, Semester> semester = cs.join("semester", JoinType.LEFT);
+            Join<AttendanceSession, User> sessionLecturer = root.join("lecturer", JoinType.LEFT);
+            Join<ClassSection, User> classLecturer = cs.join("lecturer", JoinType.LEFT);
+            Join<TimetableSlot, Room> room = ts.join("room", JoinType.LEFT);
+
+            // 1. Text Search (Class name, course name, course code, room code, lecturer name)
+            if (StringUtils.hasText(search)) {
+                String pattern = "%" + search.trim().toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(cs.get("className")), pattern),
+                        cb.like(cb.lower(course.get("name")), pattern),
+                        cb.like(cb.lower(course.get("code")), pattern),
+                        cb.like(cb.lower(room.get("code")), pattern),
+                        cb.like(cb.lower(sessionLecturer.get("fullName")), pattern),
+                        cb.like(cb.lower(classLecturer.get("fullName")), pattern)
+                ));
+            }
+
+            // 2. Semester filter
+            if (semesterId != null) {
+                predicates.add(cb.equal(semester.get("id"), semesterId));
+            }
+
+            // 3. ClassName filter
+            if (StringUtils.hasText(className)) {
+                predicates.add(cb.equal(cs.get("className"), className.trim()));
+            }
+
+            // 4. Lecturer filter
+            if (targetLecturerId != null) {
+                predicates.add(cb.or(
+                        cb.equal(sessionLecturer.get("id"), targetLecturerId),
+                        cb.equal(classLecturer.get("id"), targetLecturerId)
+                ));
+            }
+
+            // 5. Date filter
+            if (date != null) {
+                predicates.add(cb.equal(ts.get("date"), date));
+            }
+
+            // 6. Status filter
+            if (status != null) {
+                predicates.add(cb.equal(root.get("status"), status));
+            }
+
+            // Order by created_at desc if no order is specified
+            if (query != null && (query.getOrderList() == null || query.getOrderList().isEmpty())) {
+                query.orderBy(cb.desc(root.get("createdAt")), cb.desc(root.get("id")));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        Page<AttendanceSession> sessionsPage = attendanceSessionRepository.findAll(spec, pageable);
 
         return sessionsPage.map(this::mapToResponse);
     }
@@ -267,6 +330,9 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         session.setStatus(AttendanceSessionStatus.CLOSED);
         session.setClosedAt(now);
 
+        // Vô hiệu hóa và xóa toàn bộ mã QR xoay vòng của phiên
+        dynamicQrRedisService.invalidate(session.getId());
+
         // Ghi nhật ký kiểm toán
         systemLogService.logAudit(
                 "ATTENDANCE_SESSION_CLOSED",
@@ -338,13 +404,18 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
         return AttendanceSessionStatsResponse.builder()
                 .totalToday(totalToday)
+                .totalSessionsToday(totalToday)
                 .morningSessions(morning)
                 .afternoonSessions(afternoon)
                 .openCount(openCount)
+                .activeOpenSessions(openCount)
                 .closedCount(closedCount)
+                .completedSessions(closedCount)
                 .upcomingCount(upcomingCount)
                 .abnormalCount(0L)
+                .abnormalSessions(0L)
                 .attendanceRatePercentage(95.2)
+                .onTimeRate(95.2)
                 .build();
     }
 

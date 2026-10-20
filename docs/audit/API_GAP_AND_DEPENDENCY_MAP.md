@@ -9,7 +9,7 @@
 
 ---
 
-## 1. Danh Mục Các Endpoint Thực Tế Đang Hoạt Động (`ACTIVE` — 72 Endpoints)
+## 1. Danh Mục Các Endpoint Thực Tế Đang Hoạt Động (`ACTIVE` — 74 Endpoints)
 
 ### 1.1. Phân Hệ Xác Thực & Bảo Mật (Authentication Controller)
 
@@ -172,15 +172,25 @@
 
 ---
 
+### 1.10. Phân Hệ Sinh Mã QR Động & Xác Thực Token (TASK-06 - F-22)
+
+| HTTP Method | Endpoint Tuyến Đường | Controller Phụ Trách | DTO Request / Response | Phía Tiêu Thụ Thực Tế | Trạng Thái Kiểm Thử |
+| :---: | :--- | :--- | :--- | :---: | :---: |
+| `GET` | `/api/v1/attendance/sessions/{sessionId}/qr` | [DynamicQrController.java](file:///c:/Users/Admin/Documents/Antigravity/UniCheck/backend/src/main/java/com/unicheck/controller/DynamicQrController.java) | Path Variable / `QrTokenResponse` | React FE (`/lecturer/session/qr`) | **`ACTIVE`** (Passed) |
+| `POST` | `/api/v1/attendance/qr/validate` | [DynamicQrController.java](file:///c:/Users/Admin/Documents/Antigravity/UniCheck/backend/src/main/java/com/unicheck/controller/DynamicQrController.java) | `QrValidationRequest` / `QrValidationResponse` | React Simulator Bar & Mobile (TASK-07) | **`ACTIVE`** (Passed) |
+
+*Ghi chú: Endpoint hỗ trợ cả dual route `/api/attendance/...` & `/api/v1/attendance/...` tương thích ngược.*
+
+---
+
 ## 2. Danh Mục Các Endpoint Cần Triển Khai (`PLANNED` — Chưa Có Controller)
 
 Dưới đây là các API bắt buộc phải xây dựng trong các giai đoạn tiếp theo để phục vụ các màn hình Stitch và luồng điểm danh còn lại:
 
-### 2.1. Phân Hệ Sinh Mã QR Động & Check-in (`PLANNED` - TASK-06 & TASK-07)
-- `GET /api/v1/attendance/sessions/{id}/qr-token`: Lấy mã QR TOTP xoay vòng mỗi 5-10 giây (Stitch `5c0df9af4d2545919e8f774c1159e7da`).
-- `POST /api/v1/attendance/check-in`: Sinh viên check-in 4 lớp (BSSID + QR Token + Liveness + Face Match).
-- `GET /api/v1/attendance/sessions/{id}/live`: Danh sách sinh viên đã điểm danh realtime qua WebSocket (Stitch `c20e515d6d0940379d90ea268522b07e`).
-- `WS /topic/session.{id}`: Kênh WebSocket STOMP phát sóng sự kiện điểm danh tức thì.
+### 2.1. Phân Hệ Check-in Điểm Danh Mobile & Giám Sát Realtime (`PLANNED` - TASK-07 & TASK-09)
+- `POST /api/v1/attendance/check-in`: Sinh viên check-in 4 lớp (BSSID + QR Token + Liveness + Face Match) (TASK-07).
+- `GET /api/v1/attendance/sessions/{id}/live`: Danh sách sinh viên đã điểm danh realtime qua WebSocket (Stitch `c20e515d6d0940379d90ea268522b07e`) (TASK-09).
+- `WS /topic/session.{id}`: Kênh WebSocket STOMP phát sóng sự kiện điểm danh tức thì (TASK-09).
 
 ### 2.2. Phân Hệ Đơn Từ, Báo Cáo & Sổ Điểm (`PLANNED`)
 - `GET /api/v1/requests` & `POST /api/v1/requests`: Quản lý đơn xin nghỉ phép, khiếu nại (Stitch `f3fad431243448f4a7758c9ced16b695`, `c7ac82956cfe41b3b762e7aaabc2bcfa`).

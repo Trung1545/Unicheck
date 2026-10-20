@@ -136,7 +136,7 @@ public class AttendanceSessionController {
     /**
      * 8. Lấy danh sách điểm danh gần nhất phục vụ Live Activity Drawer
      */
-    @GetMapping("/sessions/{id}/recent-checkins")
+    @GetMapping({"/sessions/{id}/recent-checkins", "/sessions/{id}/attendances"})
     @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
     public ResponseEntity<ApiResponse<List<StudentAttendanceResponse>>> getRecentCheckIns(
             @AuthenticationPrincipal UserPrincipal principal,

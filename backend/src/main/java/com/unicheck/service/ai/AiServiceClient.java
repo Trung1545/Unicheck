@@ -2,8 +2,12 @@ package com.unicheck.service.ai;
 
 import com.unicheck.exception.AppException;
 import com.unicheck.exception.ErrorCode;
+import com.unicheck.model.dto.ai.AiCheckLivenessRequest;
+import com.unicheck.model.dto.ai.AiCheckLivenessResponse;
 import com.unicheck.model.dto.ai.AiExtractEmbeddingRequest;
 import com.unicheck.model.dto.ai.AiExtractEmbeddingResponse;
+import com.unicheck.model.dto.ai.AiVerifyFaceRequest;
+import com.unicheck.model.dto.ai.AiVerifyFaceResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -129,6 +133,177 @@ public class AiServiceClient {
         } catch (Exception e) {
             log.error("[CorrID={}] Lỗi kết nối tới AI Service ({}): {}", correlationId, aiServiceUrl, e.getMessage());
             throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không thể kết nối đến AI Service để nhận diện khuôn mặt");
+        }
+    }
+
+    /**
+     * Gửi ảnh sang AI Service kiểm tra thực thể sống (Liveness Anti-Spoofing - TASK-08).
+     */
+    public AiCheckLivenessResponse checkLiveness(String imageBase64, Double threshold) {
+        if (imageBase64 == null || imageBase64.trim().isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Chuỗi ảnh Base64 không được để trống");
+        }
+
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.info("[CorrID={}] Bắt đầu gửi yêu cầu kiểm tra Liveness tới AI Service", correlationId);
+
+        try {
+            AiCheckLivenessRequest request = AiCheckLivenessRequest.builder()
+                    .imageBase64(imageBase64)
+                    .threshold(threshold != null ? threshold : 0.70)
+                    .build();
+
+            AiCheckLivenessResponse response = restClient.post()
+                    .uri("/api/v1/face/check-liveness")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        AiCheckLivenessResponse errBody = null;
+                        try {
+                            errBody = objectMapper.readValue(resp.getBody(), AiCheckLivenessResponse.class);
+                        } catch (Exception parseEx) {
+                            log.warn("[CorrID={}] Không thể giải mã body 4xx từ AI Liveness: {}", correlationId, parseEx.getMessage());
+                        }
+
+                        String errCode = errBody != null ? errBody.getErrorCode() : null;
+                        String errMsg = errBody != null && errBody.getMessage() != null
+                                ? errBody.getMessage()
+                                : "Lỗi xử lý ảnh kiểm tra thực thể (HTTP " + statusCode + ")";
+
+                        if ("ERR_3001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_NOT_DETECTED, errMsg);
+                        }
+                        if ("ERR_3002".equals(errCode)) {
+                            throw new AppException(ErrorCode.MULTIPLE_FACES_DETECTED, errMsg);
+                        }
+                        if ("ERR_3003".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_LIVENESS_FAILED, errMsg);
+                        }
+                        throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        String errorMsg = "AI Liveness Service báo lỗi nội bộ (HTTP " + statusCode + ")";
+                        try {
+                            AiCheckLivenessResponse errBody = objectMapper.readValue(resp.getBody(), AiCheckLivenessResponse.class);
+                            if (errBody != null && errBody.getMessage() != null) {
+                                errorMsg = errBody.getMessage();
+                            }
+                        } catch (Exception parseEx) {
+                            log.warn("[CorrID={}] Không thể giải mã body 5xx từ AI Liveness: {}", correlationId, parseEx.getMessage());
+                        }
+                        log.error("[CorrID={}] AI Liveness Service lỗi 5xx (HTTP {}): message={}", correlationId, statusCode, errorMsg);
+                        throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, errorMsg);
+                    })
+                    .body(AiCheckLivenessResponse.class);
+
+            if (response == null || !Boolean.TRUE.equals(response.getSuccess()) || response.getData() == null) {
+                String errMsg = response != null && response.getMessage() != null
+                        ? response.getMessage()
+                        : "Không nhận được phản hồi kiểm tra Liveness hợp lệ";
+                log.warn("[CorrID={}] Phản hồi AI Liveness không hợp lệ: {}", correlationId, errMsg);
+                throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, errMsg);
+            }
+
+            log.info("[CorrID={}] Kiểm tra Liveness hoàn tất: isLive={}, confidence={}, status={}",
+                    correlationId, response.getData().getIsLive(), response.getData().getConfidence(), response.getData().getStatus());
+
+            return response;
+        } catch (AppException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[CorrID={}] Lỗi kết nối tới AI Liveness ({}): {}", correlationId, aiServiceUrl, e.getMessage());
+            throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không thể kết nối đến AI Service để kiểm tra thực thể");
+        }
+    }
+
+    /**
+     * So khớp khuôn mặt thời gian thực với vector đặc trưng 512 chiều đã đăng ký (TASK-03 ArcFace).
+     */
+    public AiVerifyFaceResponse verifyFaceWithEmbedding(List<Float> registeredEmbedding, String targetImageBase64, Double threshold) {
+        if (registeredEmbedding == null || registeredEmbedding.isEmpty()) {
+            throw new AppException(ErrorCode.FACE_NOT_REGISTERED, "Sinh viên chưa có vector đặc trưng Face-ID đã đăng ký");
+        }
+        if (targetImageBase64 == null || targetImageBase64.trim().isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Chuỗi ảnh quét khuôn mặt không được để trống");
+        }
+
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.info("[CorrID={}] Bắt đầu gửi yêu cầu so khớp FaceID tới AI Service", correlationId);
+
+        try {
+            AiVerifyFaceRequest request = AiVerifyFaceRequest.builder()
+                    .sourceEmbedding(registeredEmbedding)
+                    .targetImageBase64(targetImageBase64)
+                    .threshold(threshold != null ? threshold : 0.68)
+                    .metric("cosine")
+                    .build();
+
+            AiVerifyFaceResponse response = restClient.post()
+                    .uri("/api/v1/face/verify-face")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        AiVerifyFaceResponse errBody = null;
+                        try {
+                            errBody = objectMapper.readValue(resp.getBody(), AiVerifyFaceResponse.class);
+                        } catch (Exception parseEx) {
+                            log.warn("[CorrID={}] Không thể giải mã body 4xx từ AI Verify: {}", correlationId, parseEx.getMessage());
+                        }
+
+                        String errCode = errBody != null ? errBody.getErrorCode() : null;
+                        String errMsg = errBody != null && errBody.getMessage() != null
+                                ? errBody.getMessage()
+                                : "Lỗi xử lý so khớp khuôn mặt (HTTP " + statusCode + ")";
+
+                        if ("ERR_3001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_NOT_DETECTED, errMsg);
+                        }
+                        if ("ERR_3002".equals(errCode)) {
+                            throw new AppException(ErrorCode.MULTIPLE_FACES_DETECTED, errMsg);
+                        }
+                        if ("ERR_3004".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_NOT_MATCHED, errMsg);
+                        }
+                        throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        String errorMsg = "AI Verify Service báo lỗi nội bộ (HTTP " + statusCode + ")";
+                        try {
+                            AiVerifyFaceResponse errBody = objectMapper.readValue(resp.getBody(), AiVerifyFaceResponse.class);
+                            if (errBody != null && errBody.getMessage() != null) {
+                                errorMsg = errBody.getMessage();
+                            }
+                        } catch (Exception parseEx) {
+                            log.warn("[CorrID={}] Không thể giải mã body 5xx từ AI Verify: {}", correlationId, parseEx.getMessage());
+                        }
+                        log.error("[CorrID={}] AI Verify Service lỗi 5xx (HTTP {}): message={}", correlationId, statusCode, errorMsg);
+                        throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, errorMsg);
+                    })
+                    .body(AiVerifyFaceResponse.class);
+
+            if (response == null || !Boolean.TRUE.equals(response.getSuccess()) || response.getData() == null) {
+                String errMsg = response != null && response.getMessage() != null
+                        ? response.getMessage()
+                        : "Không nhận được kết quả so khớp khuôn mặt từ AI Service";
+                log.warn("[CorrID={}] Phản hồi AI Verify không hợp lệ: {}", correlationId, errMsg);
+                throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, errMsg);
+            }
+
+            log.info("[CorrID={}] So khớp FaceID hoàn tất: matched={}, similarity={}, threshold={}",
+                    correlationId, response.getData().getMatched(), response.getData().getSimilarity(), response.getData().getThreshold());
+
+            return response;
+        } catch (AppException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[CorrID={}] Lỗi kết nối tới AI Verify ({}): {}", correlationId, aiServiceUrl, e.getMessage());
+            throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không thể kết nối đến AI Service để so khớp khuôn mặt");
         }
     }
 
