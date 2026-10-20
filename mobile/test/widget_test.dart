@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:unicheck_mobile/core/network/api_client.dart';
 import 'package:unicheck_mobile/core/routes/app_routes.dart';
 import 'package:unicheck_mobile/core/storage/token_storage.dart';
@@ -15,7 +16,8 @@ class WidgetTestTokenStorage implements TokenStorage {
   String? refreshToken;
 
   @override
-  Future<void> saveTokens({required String accessToken, required String refreshToken}) async {
+  Future<void> saveTokens(
+      {required String accessToken, required String refreshToken}) async {
     this.accessToken = accessToken;
     this.refreshToken = refreshToken;
   }
@@ -33,11 +35,13 @@ class WidgetTestTokenStorage implements TokenStorage {
   }
 
   @override
-  Future<bool> hasAccessToken() async => accessToken != null && accessToken!.isNotEmpty;
+  Future<bool> hasAccessToken() async =>
+      accessToken != null && accessToken!.isNotEmpty;
 }
 
 class WidgetTestAuthApiService extends AuthApiService {
-  WidgetTestAuthApiService() : super(apiClient: ApiClient(tokenStorage: WidgetTestTokenStorage()));
+  WidgetTestAuthApiService()
+      : super(apiClient: ApiClient(tokenStorage: WidgetTestTokenStorage()));
 
   bool shouldFailLogin = false;
   String loginErrorMessage = 'Tên đăng nhập hoặc mật khẩu không chính xác';
@@ -84,6 +88,9 @@ class WidgetTestAuthApiService extends AuthApiService {
 }
 
 void main() {
+  setUpAll(() {
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
   setUp(() {
     Get.reset();
   });
@@ -99,7 +106,8 @@ void main() {
 
     // Verify brand title and login elements
     expect(find.text('UniCheck'), findsOneWidget);
-    expect(find.text('Hệ thống Điểm danh Sinh trắc học Thông minh'), findsOneWidget);
+    expect(find.text('Hệ thống Điểm danh Sinh trắc học Thông minh'),
+        findsOneWidget);
     expect(find.text('Tên đăng nhập / MSSV / Email'), findsOneWidget);
     expect(find.text('Mật khẩu'), findsOneWidget);
     expect(find.text('Đăng Nhập'), findsOneWidget);
@@ -117,11 +125,13 @@ void main() {
     await tester.pump();
 
     // Verify error banner is rendered
-    expect(find.text('Vui lòng nhập tên đăng nhập và mật khẩu'), findsOneWidget);
+    expect(
+        find.text('Vui lòng nhập tên đăng nhập và mật khẩu'), findsOneWidget);
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
   });
 
-  testWidgets('Widget Test (401 Bad Credentials): displays error banner on failed login',
+  testWidgets(
+      'Widget Test (401 Bad Credentials): displays error banner on failed login',
       (WidgetTester tester) async {
     final fakeService = WidgetTestAuthApiService()..shouldFailLogin = true;
     final fakeStorage = WidgetTestTokenStorage();
@@ -145,12 +155,15 @@ void main() {
     await tester.tap(submitButton);
     await tester.pump();
 
-    expect(controller.errorMessage.value, equals('Tên đăng nhập hoặc mật khẩu không chính xác'));
-    expect(find.text('Tên đăng nhập hoặc mật khẩu không chính xác'), findsOneWidget);
+    expect(controller.errorMessage.value,
+        equals('Tên đăng nhập hoặc mật khẩu không chính xác'));
+    expect(find.text('Tên đăng nhập hoặc mật khẩu không chính xác'),
+        findsOneWidget);
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
   });
 
-  testWidgets('Widget Test (401 Expired Session): forceLogout displays expired session banner',
+  testWidgets(
+      'Widget Test (401 Expired Session): forceLogout displays expired session banner',
       (WidgetTester tester) async {
     await tester.pumpWidget(const UniCheckMobileApp());
     await tester.pumpAndSettle();
@@ -159,11 +172,13 @@ void main() {
     controller.forceLogout();
     await tester.pumpAndSettle();
 
-    expect(find.text('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại'), findsOneWidget);
+    expect(find.text('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại'),
+        findsOneWidget);
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
   });
 
-  testWidgets('Widget Test (403 / Role Mismatch): verifies role guard blocks unauthorized access',
+  testWidgets(
+      'Widget Test (403 / Role Mismatch): verifies role guard blocks unauthorized access',
       (WidgetTester tester) async {
     await tester.pumpWidget(const UniCheckMobileApp());
     await tester.pumpAndSettle();

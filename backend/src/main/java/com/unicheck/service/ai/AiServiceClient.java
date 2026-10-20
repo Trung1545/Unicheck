@@ -2,8 +2,7 @@ package com.unicheck.service.ai;
 
 import com.unicheck.exception.AppException;
 import com.unicheck.exception.ErrorCode;
-import com.unicheck.model.dto.ai.AiExtractEmbeddingRequest;
-import com.unicheck.model.dto.ai.AiExtractEmbeddingResponse;
+import com.unicheck.model.dto.ai.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +16,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -133,6 +133,157 @@ public class AiServiceClient {
     }
 
     /**
+     * So khớp vector khuôn mặt đã đăng ký với ảnh điểm danh thực tế (Cosine Similarity).
+     */
+    public AiVerifyFaceResponse verifyFace(List<Float> sourceEmbedding, String targetImageBase64, Double threshold) {
+        if (sourceEmbedding == null || sourceEmbedding.isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Vector đặc trưng gốc không được để trống");
+        }
+        if (targetImageBase64 == null || targetImageBase64.trim().isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Ảnh điểm danh không được để trống");
+        }
+
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.info("[CorrID={}] Bắt đầu gửi yêu cầu so khớp khuôn mặt tới AI Service", correlationId);
+
+        try {
+            AiVerifyFaceRequest request = AiVerifyFaceRequest.builder()
+                    .sourceEmbedding(sourceEmbedding)
+                    .targetImageBase64(targetImageBase64)
+                    .threshold(threshold != null ? threshold : 0.68)
+                    .build();
+
+            AiVerifyFaceResponse response = restClient.post()
+                    .uri("/api/v1/face/verify-face")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        AiVerifyFaceResponse errBody = null;
+                        try {
+                            errBody = objectMapper.readValue(resp.getBody(), AiVerifyFaceResponse.class);
+                        } catch (Exception parseEx) {
+                            log.warn("[CorrID={}] Không thể giải mã body 4xx verifyFace: {}", correlationId, parseEx.getMessage());
+                        }
+
+                        String errCode = errBody != null ? errBody.getErrorCode() : null;
+                        String errMsg = errBody != null && errBody.getMessage() != null
+                                ? errBody.getMessage()
+                                : "Lỗi so khớp khuôn mặt (HTTP " + statusCode + ")";
+
+                        log.warn("[CorrID={}] AI Service verify-face báo lỗi 4xx (HTTP {}): errorCode={}, message={}",
+                                correlationId, statusCode, errCode, errMsg);
+
+                        if ("ERR_3001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_NOT_DETECTED, errMsg);
+                        }
+                        if ("ERR_3002".equals(errCode)) {
+                            throw new AppException(ErrorCode.MULTIPLE_FACES_DETECTED, errMsg);
+                        }
+                        if ("ERR_3004".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_NOT_MATCHED, errMsg);
+                        }
+                        throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        log.error("[CorrID={}] AI Service verifyFace báo lỗi 5xx (HTTP {})", correlationId, statusCode);
+                        throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Dịch vụ AI nhận diện khuôn mặt tạm thời không khả dụng");
+                    })
+                    .body(AiVerifyFaceResponse.class);
+
+            if (response == null) {
+                throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không nhận được phản hồi từ AI Service");
+            }
+
+            log.info("[CorrID={}] Kết quả so khớp khuôn mặt: matched={}, similarity={}",
+                    correlationId, response.isMatched(), response.getSimilarity());
+
+            return response;
+        } catch (AppException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[CorrID={}] Lỗi kết nối AI Service verifyFace: {}", correlationId, e.getMessage());
+            throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không thể kết nối đến AI Service để so khớp khuôn mặt");
+        }
+    }
+
+    /**
+     * Kiểm tra thực thể sống (Passive Anti-Spoofing MiniFASNet).
+     */
+    public AiCheckLivenessResponse checkLiveness(String imageBase64, Double threshold) {
+        if (imageBase64 == null || imageBase64.trim().isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Chuỗi ảnh Base64 không được để trống");
+        }
+
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.info("[CorrID={}] Gửi yêu cầu kiểm tra liveness tới AI Service", correlationId);
+
+        try {
+            AiCheckLivenessRequest request = AiCheckLivenessRequest.builder()
+                    .imageBase64(imageBase64)
+                    .threshold(threshold != null ? threshold : 0.70)
+                    .build();
+
+            AiCheckLivenessResponse response = restClient.post()
+                    .uri("/api/v1/face/check-liveness")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        AiCheckLivenessResponse errBody = null;
+                        try {
+                            errBody = objectMapper.readValue(resp.getBody(), AiCheckLivenessResponse.class);
+                        } catch (Exception parseEx) {
+                            log.warn("[CorrID={}] Không thể giải mã body 4xx checkLiveness: {}", correlationId, parseEx.getMessage());
+                        }
+
+                        String errCode = errBody != null ? errBody.getErrorCode() : null;
+                        String errMsg = errBody != null && errBody.getMessage() != null
+                                ? errBody.getMessage()
+                                : "Lỗi kiểm tra liveness (HTTP " + statusCode + ")";
+
+                        log.warn("[CorrID={}] AI Service check-liveness báo lỗi 4xx (HTTP {}): errorCode={}, message={}",
+                                correlationId, statusCode, errCode, errMsg);
+
+                        if ("ERR_3001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_NOT_DETECTED, errMsg);
+                        }
+                        if ("ERR_3002".equals(errCode)) {
+                            throw new AppException(ErrorCode.MULTIPLE_FACES_DETECTED, errMsg);
+                        }
+                        throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
+                        int statusCode = resp.getStatusCode().value();
+                        if (statusCode == 503) {
+                            log.warn("[CorrID={}] AI Service liveness engine 503 (Fail-Closed/Not Ready)", correlationId);
+                            throw new AppException(ErrorCode.FACE_LIVENESS_FAILED,
+                                    "Dịch vụ chống giả mạo khuôn mặt chưa sẵn sàng (Fail-Closed)");
+                        }
+                        throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "AI Service liveness báo lỗi máy chủ nội bộ");
+                    })
+                    .body(AiCheckLivenessResponse.class);
+
+            if (response == null) {
+                throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không nhận được phản hồi liveness từ AI Service");
+            }
+
+            log.info("[CorrID={}] Kết quả kiểm tra liveness: isLive={}, score={}",
+                    correlationId, response.isLive(), response.getLivenessScore());
+
+            return response;
+        } catch (AppException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[CorrID={}] Lỗi kết nối AI Service checkLiveness: {}", correlationId, e.getMessage());
+            throw new AppException(ErrorCode.AI_SERVICE_UNAVAILABLE, "Không thể kết nối đến AI Service để kiểm tra liveness");
+        }
+    }
+
+    /**
      * Chuyển đổi List<Float> 512 phần tử thành mảng byte[] (2048 bytes) lưu trữ PostgreSQL BYTEA.
      */
     public static byte[] floatListToByteArray(List<Float> floats) {
@@ -157,6 +308,19 @@ public class AiServiceClient {
             floats[i] = buffer.getFloat();
         }
         return floats;
+    }
+
+    /**
+     * Chuyển đổi mảng byte[] PostgreSQL BYTEA thành List<Float>.
+     */
+    public static List<Float> byteArrayToFloatList(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return List.of();
+        float[] floats = byteArrayToFloatArray(bytes);
+        List<Float> list = new ArrayList<>(floats.length);
+        for (float f : floats) {
+            list.add(f);
+        }
+        return list;
     }
 
     /**
