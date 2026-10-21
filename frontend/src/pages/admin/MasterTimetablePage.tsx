@@ -249,8 +249,14 @@ export const MasterTimetablePage: React.FC = () => {
           getTimetableStatsApi(selectedSemesterId || undefined, startIso),
         ]);
 
-        if (slotsRes.success && Array.isArray(slotsRes.data)) {
-          setSlots(slotsRes.data);
+        if (slotsRes.success) {
+          if (Array.isArray(slotsRes.data)) {
+            setSlots(slotsRes.data);
+          } else if ((slotsRes.data as any)?.content) {
+            setSlots((slotsRes.data as any).content);
+          } else {
+            setSlots([]);
+          }
         } else {
           setSlots([]);
         }
@@ -261,8 +267,14 @@ export const MasterTimetablePage: React.FC = () => {
       } else {
         // LECTURER or STUDENT: Call role-scoped personal timetable API (/me)
         const meRes = await getMyTimetableApi(startIso, endIso);
-        if (meRes.success && Array.isArray(meRes.data)) {
-          setSlots(meRes.data);
+        if (meRes.success) {
+          if (Array.isArray(meRes.data)) {
+            setSlots(meRes.data);
+          } else if ((meRes.data as any)?.content) {
+            setSlots((meRes.data as any).content);
+          } else {
+            setSlots([]);
+          }
         } else {
           setSlots([]);
         }
@@ -540,6 +552,168 @@ export const MasterTimetablePage: React.FC = () => {
       currentSemesterObj?.endDate
     );
   }, [weekStart, weekEnd, currentSemesterObj?.startDate, currentSemesterObj?.endDate]);
+
+  // Sub-renderer for Shift Row in Week Grid
+  function renderShiftRow(shift: ShiftRowConfig) {
+    return (
+      <div key={shift.id} className="grid grid-cols-[130px_repeat(7,1fr)] min-h-[150px] border-b border-slate-200">
+        {/* Time Axis Column */}
+        <div className="bg-slate-50 p-2.5 flex flex-col justify-center items-center text-center border-r border-slate-200">
+          <span className="text-xs font-bold text-slate-900">{shift.label}</span>
+          <span className="text-xs font-mono text-slate-600 mt-0.5">{shift.timeRange}</span>
+          <span className="text-[10px] text-slate-400 mt-1">{shift.duration}</span>
+        </div>
+
+        {/* 7 Days Cells: Thứ Hai to Chủ Nhật */}
+        {weekDays.map((wd) => {
+          // Find slots matching this day and this shift period range
+          const cellSlots = slots.filter((s) => {
+            if (s.date !== wd.isoDate) return false;
+            // Slot matches if its slotNumber falls within shift's period range
+            return s.slotNumber >= shift.startPeriod && s.slotNumber <= shift.endPeriod;
+          });
+
+          if (cellSlots.length > 0) {
+            // Check if there is a collision
+            const hasConflict = cellSlots.some((s) => s.hasConflict) || cellSlots.length > 1;
+
+            if (hasConflict) {
+              return (
+                <div
+                  key={wd.dayIndex}
+                  ref={collisionAnchorRef}
+                  id="collisionSlotAnchor"
+                  className="p-1.5 bg-red-50/50 border-r border-slate-200 last:border-r-0 relative"
+                >
+                  <div className="h-full w-full rounded-lg bg-white p-2.5 border-2 border-red-500 shadow-md flex flex-col justify-between">
+                    {/* Pulsing banner */}
+                    <div className="flex items-center justify-between bg-red-600 text-white px-2 py-0.5 rounded -mx-1 -mt-1 mb-1.5 animate-pulse text-[10px] font-bold">
+                      <div className="flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        <span>XUNG ĐỘT LỊCH HỌC</span>
+                      </div>
+                      <span>Cần sửa</span>
+                    </div>
+
+                    <div className="space-y-1 overflow-y-auto max-h-[85px]">
+                      {cellSlots.map((cs) => (
+                        <div key={cs.id} className="bg-red-50 p-1.5 rounded border border-red-200 text-[11px]">
+                          <div className="flex items-center justify-between font-bold text-red-700">
+                            <span>{cs.className}</span>
+                            <span>{cs.roomCode ? `P. ${cs.roomCode}` : 'Chưa xếp phòng'}</span>
+                          </div>
+                          <div className="text-slate-700 font-semibold flex items-center gap-1 mt-0.5">
+                            <span className="text-red-700 underline">{cs.lecturerName || 'Chưa có GV'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {isAdmin && (
+                      <div className="mt-2 flex items-center gap-1 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openSlotModal('edit', cellSlots[0])}
+                          className="px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 flex items-center gap-1 w-full justify-center shadow-sm"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Đổi phòng / Đổi GV</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+
+            // Single Valid Slot
+            const slot = cellSlots[0];
+            const isLab = slot.courseCategory === 'LAB' || (slot.roomName && slot.roomName.includes('Lab'));
+
+            return (
+              <div
+                key={wd.dayIndex}
+                className="p-1.5 bg-white hover:bg-slate-50 transition border-r border-slate-200 last:border-r-0 relative group"
+              >
+                <div
+                  onClick={() => isAdmin && openSlotModal('edit', slot)}
+                  className={`h-full w-full rounded-lg bg-white border border-slate-200/90 p-2.5 shadow-sm transition flex flex-col justify-between ${
+                    isAdmin ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span
+                        className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                          isLab
+                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                        }`}
+                      >
+                        {slot.className}
+                      </span>
+                      <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.5 rounded flex items-center gap-0.5 font-semibold">
+                        <Bot className="w-3 h-3 text-emerald-600" />
+                        {slot.attendanceMethod?.includes('QR') ? 'QR Code' : 'Kiosk AI'}
+                      </span>
+                    </div>
+
+                    <h4 className="text-xs font-bold text-slate-900 line-clamp-1" title={slot.courseName || ''}>
+                      {slot.courseName || 'Học phần'}
+                    </h4>
+
+                    <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                      <Users className="w-3 h-3 text-slate-400" />
+                      <span className="truncate">{slot.lecturerName || 'Chưa phân công'}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-blue-700 flex items-center gap-0.5">
+                      <MapPin className="w-3 h-3" />
+                      {slot.roomCode ? `P. ${slot.roomCode}` : 'Chưa xếp'}
+                    </span>
+                    <span className="flex items-center gap-0.5 font-mono text-slate-500">
+                      <Users className="w-3 h-3" />
+                      {slot.currentEnrollment} SV
+                    </span>
+                  </div>
+
+                  {isLecturer && (
+                    <div className="mt-1 pt-1 border-t border-dashed border-slate-100 flex justify-end">
+                      <Link
+                        to="/lecturer/attendance/sessions"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded transition"
+                      >
+                        Vào điểm danh &rarr;
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          // Empty cell: if admin, hover '+' button to add slot
+          return (
+            <div
+              key={wd.dayIndex}
+              onClick={() => isAdmin && openSlotModal('create', undefined, wd.dayIndex, shift.startPeriod, shift.endPeriod)}
+              className={`p-1.5 bg-white transition flex items-center justify-center group border-r border-slate-200 last:border-r-0 ${
+                isAdmin ? 'hover:bg-blue-50/40 cursor-pointer' : 'cursor-default'
+              }`}
+              title={isAdmin ? `Nhấp để thêm tiết học vào ${wd.label} (${shift.label})` : undefined}
+            >
+              {isAdmin && (
+                <Plus className="w-5 h-5 text-slate-300 group-hover:text-blue-600 group-hover:scale-110 transition-all opacity-0 group-hover:opacity-100" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col w-full pb-12 font-sans">
@@ -1522,167 +1696,6 @@ export const MasterTimetablePage: React.FC = () => {
     </div>
   );
 
-  // Sub-renderer for Shift Row in Week Grid
-  function renderShiftRow(shift: ShiftRowConfig) {
-    return (
-      <div key={shift.id} className="grid grid-cols-[130px_repeat(7,1fr)] min-h-[150px] border-b border-slate-200">
-        {/* Time Axis Column */}
-        <div className="bg-slate-50 p-2.5 flex flex-col justify-center items-center text-center border-r border-slate-200">
-          <span className="text-xs font-bold text-slate-900">{shift.label}</span>
-          <span className="text-xs font-mono text-slate-600 mt-0.5">{shift.timeRange}</span>
-          <span className="text-[10px] text-slate-400 mt-1">{shift.duration}</span>
-        </div>
-
-        {/* 7 Days Cells: Thứ Hai to Chủ Nhật */}
-        {weekDays.map((wd) => {
-          // Find slots matching this day and this shift period range
-          const cellSlots = slots.filter((s) => {
-            if (s.date !== wd.isoDate) return false;
-            // Slot matches if its slotNumber falls within shift's period range
-            return s.slotNumber >= shift.startPeriod && s.slotNumber <= shift.endPeriod;
-          });
-
-          if (cellSlots.length > 0) {
-            // Check if there is a collision
-            const hasConflict = cellSlots.some((s) => s.hasConflict) || cellSlots.length > 1;
-
-            if (hasConflict) {
-              return (
-                <div
-                  key={wd.dayIndex}
-                  ref={collisionAnchorRef}
-                  id="collisionSlotAnchor"
-                  className="p-1.5 bg-red-50/50 border-r border-slate-200 last:border-r-0 relative"
-                >
-                  <div className="h-full w-full rounded-lg bg-white p-2.5 border-2 border-red-500 shadow-md flex flex-col justify-between">
-                    {/* Pulsing banner */}
-                    <div className="flex items-center justify-between bg-red-600 text-white px-2 py-0.5 rounded -mx-1 -mt-1 mb-1.5 animate-pulse text-[10px] font-bold">
-                      <div className="flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />
-                        <span>XUNG ĐỘT LỊCH HỌC</span>
-                      </div>
-                      <span>Cần sửa</span>
-                    </div>
-
-                    <div className="space-y-1 overflow-y-auto max-h-[85px]">
-                      {cellSlots.map((cs) => (
-                        <div key={cs.id} className="bg-red-50 p-1.5 rounded border border-red-200 text-[11px]">
-                          <div className="flex items-center justify-between font-bold text-red-700">
-                            <span>{cs.className}</span>
-                            <span>{cs.roomCode ? `P. ${cs.roomCode}` : 'Chưa xếp phòng'}</span>
-                          </div>
-                          <div className="text-slate-700 font-semibold flex items-center gap-1 mt-0.5">
-                            <span className="text-red-700 underline">{cs.lecturerName || 'Chưa có GV'}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {isAdmin && (
-                      <div className="mt-2 flex items-center gap-1 justify-end">
-                        <button
-                          type="button"
-                          onClick={() => openSlotModal('edit', cellSlots[0])}
-                          className="px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 flex items-center gap-1 w-full justify-center shadow-sm"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>Đổi phòng / Đổi GV</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            }
-
-            // Single Valid Slot
-            const slot = cellSlots[0];
-            const isLab = slot.courseCategory === 'LAB' || (slot.roomName && slot.roomName.includes('Lab'));
-
-            return (
-              <div
-                key={wd.dayIndex}
-                className="p-1.5 bg-white hover:bg-slate-50 transition border-r border-slate-200 last:border-r-0 relative group"
-              >
-                <div
-                  onClick={() => isAdmin && openSlotModal('edit', slot)}
-                  className={`h-full w-full rounded-lg bg-white border border-slate-200/90 p-2.5 shadow-sm transition flex flex-col justify-between ${
-                    isAdmin ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-1 mb-1">
-                      <span
-                        className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
-                          isLab
-                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
-                        }`}
-                      >
-                        {slot.className}
-                      </span>
-                      <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.5 rounded flex items-center gap-0.5 font-semibold">
-                        <Bot className="w-3 h-3 text-emerald-600" />
-                        {slot.attendanceMethod?.includes('QR') ? 'QR Code' : 'Kiosk AI'}
-                      </span>
-                    </div>
-
-                    <h4 className="text-xs font-bold text-slate-900 line-clamp-1" title={slot.courseName || ''}>
-                      {slot.courseName || 'Học phần'}
-                    </h4>
-
-                    <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                      <Users className="w-3 h-3 text-slate-400" />
-                      <span className="truncate">{slot.lecturerName || 'Chưa phân công'}</span>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                    <span className="font-bold text-blue-700 flex items-center gap-0.5">
-                      <MapPin className="w-3 h-3" />
-                      {slot.roomCode ? `P. ${slot.roomCode}` : 'Chưa xếp'}
-                    </span>
-                    <span className="flex items-center gap-0.5 font-mono text-slate-500">
-                      <Users className="w-3 h-3" />
-                      {slot.currentEnrollment} SV
-                    </span>
-                  </div>
-
-                  {isLecturer && (
-                    <div className="mt-1 pt-1 border-t border-dashed border-slate-100 flex justify-end">
-                      <Link
-                        to="/lecturer/attendance/sessions"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded transition"
-                      >
-                        Vào điểm danh &rarr;
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          }
-
-          // Empty cell: if admin, hover '+' button to add slot
-          return (
-            <div
-              key={wd.dayIndex}
-              onClick={() => isAdmin && openSlotModal('create', undefined, wd.dayIndex, shift.startPeriod, shift.endPeriod)}
-              className={`p-1.5 bg-white transition flex items-center justify-center group border-r border-slate-200 last:border-r-0 ${
-                isAdmin ? 'hover:bg-blue-50/40 cursor-pointer' : 'cursor-default'
-              }`}
-              title={isAdmin ? `Nhấp để thêm tiết học vào ${wd.label} (${shift.label})` : undefined}
-            >
-              {isAdmin && (
-                <Plus className="w-5 h-5 text-slate-300 group-hover:text-blue-600 group-hover:scale-110 transition-all opacity-0 group-hover:opacity-100" />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
 };
 
 export default MasterTimetablePage;

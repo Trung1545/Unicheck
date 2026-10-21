@@ -33,6 +33,19 @@ class AuthController extends GetxController {
                 ? Get.find<TokenStorage>()
                 : PlatformTokenStorage());
 
+  Future<void> refreshProfile() async {
+    try {
+      final profile = await authApiService.getMe();
+      user.value = profile;
+    } catch (_) {}
+  }
+
+  void updateFaceDataStatus(String status) {
+    if (user.value != null) {
+      user.value = user.value!.copyWith(faceDataStatus: status);
+    }
+  }
+
   bool get isAuthenticated => user.value != null;
   bool get isStudent => user.value?.isStudent ?? false;
 

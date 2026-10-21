@@ -70,7 +70,12 @@ class FaceEnrollmentResultView extends StatelessWidget {
         centerTitle: false,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: UniColors.textPrimary),
-          onPressed: () => Get.offAllNamed(AppRoutes.student),
+          onPressed: () async {
+            if (Get.isRegistered<AuthController>()) {
+              await Get.find<AuthController>().refreshProfile();
+            }
+            Get.offAllNamed(AppRoutes.student);
+          },
         ),
         title: Text(
           'Kết Quả Xác Thực',
@@ -522,7 +527,12 @@ class FaceEnrollmentResultView extends StatelessWidget {
                 UniSecondaryButton(
                   text: 'Về Trang chủ Học vụ',
                   icon: Icons.home_rounded,
-                  onPressed: () => Get.offAllNamed(AppRoutes.student),
+                  onPressed: () async {
+            if (Get.isRegistered<AuthController>()) {
+              await Get.find<AuthController>().refreshProfile();
+            }
+            Get.offAllNamed(AppRoutes.student);
+          },
                 ),
               ] else ...[
                 // FAILURE VIEW
@@ -572,7 +582,12 @@ class FaceEnrollmentResultView extends StatelessWidget {
                 UniSecondaryButton(
                   text: 'Về Trang chủ Học vụ',
                   icon: Icons.home_rounded,
-                  onPressed: () => Get.offAllNamed(AppRoutes.student),
+                  onPressed: () async {
+            if (Get.isRegistered<AuthController>()) {
+              await Get.find<AuthController>().refreshProfile();
+            }
+            Get.offAllNamed(AppRoutes.student);
+          },
                 ),
               ],
             ],

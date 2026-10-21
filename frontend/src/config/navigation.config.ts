@@ -50,7 +50,7 @@ export const NAVIGATION_CONFIG: Record<Role, NavSection[]> = {
         },
         {
           id: 'admin-classes',
-          label: 'Lớp học phần',
+          label: 'Quản lý lớp học phần',
           path: '/dashboard/classes',
           icon: BookOpen,
         },
@@ -85,7 +85,7 @@ export const NAVIGATION_CONFIG: Record<Role, NavSection[]> = {
         },
         {
           id: 'admin-timetable',
-          label: 'Thời khóa biểu',
+          label: 'Thời khóa biểu tuần',
           path: '/admin/timetable',
           icon: Calendar,
         },
@@ -175,7 +175,7 @@ export const NAVIGATION_CONFIG: Record<Role, NavSection[]> = {
         },
         {
           id: 'lecturer-timetable',
-          label: 'Lịch giảng dạy',
+          label: 'Thời khóa biểu tuần',
           path: '/lecturer/timetable',
           icon: Calendar,
         },

@@ -42,6 +42,32 @@ class UserModel {
     );
   }
 
+  UserModel copyWith({
+    int? id,
+    String? code,
+    String? username,
+    String? fullName,
+    String? email,
+    String? role,
+    String? status,
+    String? faceDataStatus,
+    bool? isPasswordChanged,
+    String? avatar,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      code: code ?? this.code,
+      username: username ?? this.username,
+      fullName: fullName ?? this.fullName,
+      email: email ?? this.email,
+      role: role ?? this.role,
+      status: status ?? this.status,
+      faceDataStatus: faceDataStatus ?? this.faceDataStatus,
+      isPasswordChanged: isPasswordChanged ?? this.isPasswordChanged,
+      avatar: avatar ?? this.avatar,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,

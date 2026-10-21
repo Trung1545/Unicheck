@@ -60,10 +60,17 @@ import { Modal } from '../../common-ui/Modal';
 import { Pagination } from '../../common-ui/Pagination';
 import { Skeleton } from '../../common-ui/Skeleton';
 import { EmptyState } from '../../common-ui/EmptyState';
+import { useAuthStore } from '../../store/auth-store';
 
 export const ClassSectionPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // User role checking for strict RBAC
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === 'ADMIN';
+  const isLecturer = user?.role === 'LECTURER';
+  const isStudent = user?.role === 'STUDENT';
 
   // ==========================================
   // STATE: Table Data & Pagination & Filtering
@@ -140,10 +147,17 @@ export const ClassSectionPage: React.FC = () => {
     setIsLookupsLoading(true);
     setLookupsError(null);
     try {
+      const coursesPromise = getCourseSummariesApi();
+      const semestersPromise = getSemestersApi({ size: 100 });
+      // LECTURER role check: only ADMIN has permissions to query /api/v1/users
+      const lecturersPromise = isAdmin
+        ? getUsersApi({ role: 'LECTURER', status: 'ACTIVE', size: 100 })
+        : Promise.resolve(null);
+
       const [coursesRes, semestersRes, lecturersRes] = await Promise.all([
-        getCourseSummariesApi(),
-        getSemestersApi({ size: 100 }),
-        getUsersApi({ role: 'LECTURER', status: 'ACTIVE', size: 100 }),
+        coursesPromise,
+        semestersPromise,
+        lecturersPromise,
       ]);
 
       if (coursesRes.success && coursesRes.data) {
@@ -158,7 +172,7 @@ export const ClassSectionPage: React.FC = () => {
           : (semestersRes.data as any).content || [];
         setSemesters(sList);
       }
-      if (lecturersRes.success && lecturersRes.data) {
+      if (lecturersRes && lecturersRes.success && lecturersRes.data) {
         const lList = Array.isArray(lecturersRes.data)
           ? lecturersRes.data
           : (lecturersRes.data as any).content || [];
@@ -170,7 +184,7 @@ export const ClassSectionPage: React.FC = () => {
     } finally {
       setIsLookupsLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     loadLookups();
@@ -439,15 +453,21 @@ export const ClassSectionPage: React.FC = () => {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1.5 text-xs text-on-surface-variant font-medium">
-            <span>Quản trị hệ thống</span>
+            <span>{isAdmin ? 'Quản trị hệ thống' : isLecturer ? 'Cổng Giảng viên' : 'Cổng Sinh viên'}</span>
             <ChevronRight className="w-3.5 h-3.5 text-outline-variant" />
             <span>Đào tạo &amp; Học vụ</span>
             <ChevronRight className="w-3.5 h-3.5 text-outline-variant" />
-            <span className="text-primary font-semibold">Lớp học phần</span>
+            <span className="text-primary font-semibold">
+              {isAdmin ? 'Quản lý Lớp học phần' : isLecturer ? 'Lớp học phần phụ trách' : 'Lớp học phần của tôi'}
+            </span>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
-              Quản lý Lớp học phần &amp; Kế hoạch giảng dạy
+              {isAdmin
+                ? 'Quản lý Lớp học phần & Kế hoạch giảng dạy'
+                : isLecturer
+                ? 'Lớp học phần phụ trách giảng dạy'
+                : 'Lớp học phần của tôi'}
             </h1>
             <span className="px-3 py-1 rounded-full bg-surface-container text-primary text-xs font-semibold">
               {activeSemesterLabel}
@@ -457,30 +477,34 @@ export const ClassSectionPage: React.FC = () => {
 
         {/* Quick Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          <Button
-            variant="outline"
-            className="flex items-center gap-1.5 h-10 shadow-sm"
-            onClick={() => setSuccessToast('Tính năng nhập file (.xlsx) đã sẵn sàng qua phân hệ Ghi danh')}
-          >
-            <Upload className="w-4 h-4 text-secondary" />
-            <span>Nhập file (.xlsx)</span>
-          </Button>
-          <Button
-            variant="outline"
-            className="flex items-center gap-1.5 h-10 shadow-sm"
-            onClick={() => setSuccessToast('Đang tạo và tải xuống bản báo cáo kế hoạch đào tạo')}
-          >
-            <Download className="w-4 h-4" />
-            <span>Xuất kế hoạch</span>
-          </Button>
-          <Button
-            variant="primary"
-            className="flex items-center gap-1.5 h-10 shadow-md bg-primary hover:bg-primary-container text-white"
-            onClick={handleOpenCreateModal}
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>Thêm lớp học phần mới</span>
-          </Button>
+          {isAdmin && (
+            <>
+              <Button
+                variant="outline"
+                className="flex items-center gap-1.5 h-10 shadow-sm"
+                onClick={() => setSuccessToast('Tính năng nhập file (.xlsx) đã sẵn sàng qua phân hệ Ghi danh')}
+              >
+                <Upload className="w-4 h-4 text-secondary" />
+                <span>Nhập file (.xlsx)</span>
+              </Button>
+              <Button
+                variant="outline"
+                className="flex items-center gap-1.5 h-10 shadow-sm"
+                onClick={() => setSuccessToast('Đang tạo và tải xuống bản báo cáo kế hoạch đào tạo')}
+              >
+                <Download className="w-4 h-4" />
+                <span>Xuất kế hoạch</span>
+              </Button>
+              <Button
+                variant="primary"
+                className="flex items-center gap-1.5 h-10 shadow-md bg-primary hover:bg-primary-container text-white"
+                onClick={handleOpenCreateModal}
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Thêm lớp học phần mới</span>
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -787,27 +811,31 @@ export const ClassSectionPage: React.FC = () => {
                           >
                             <Eye className="w-4 h-4" />
                           </button>
-                          <button
-                            onClick={() => navigate(`/admin/enrollments?className=${cs.className}`)}
-                            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container text-secondary transition-colors"
-                            title="Quản lý ghi danh sinh viên cho lớp này"
-                          >
-                            <Users className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleOpenEditModal(cs)}
-                            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container text-primary transition-colors"
-                            title="Chỉnh sửa lớp học phần"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleOpenDeleteModal(cs)}
-                            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-error-container text-error transition-colors"
-                            title="Xóa lớp học phần"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {isAdmin && (
+                            <>
+                              <button
+                                onClick={() => navigate(`/admin/enrollments?className=${cs.className}`)}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container text-secondary transition-colors"
+                                title="Quản lý ghi danh sinh viên cho lớp này"
+                              >
+                                <Users className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleOpenEditModal(cs)}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container text-primary transition-colors"
+                                title="Chỉnh sửa lớp học phần"
+                              >
+                                <Edit className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleOpenDeleteModal(cs)}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-error-container text-error transition-colors"
+                                title="Xóa lớp học phần"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -906,17 +934,19 @@ export const ClassSectionPage: React.FC = () => {
                     <span className="text-xs text-on-surface-variant font-medium">
                       Danh sách đã ghi danh chính thức
                     </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        navigate(`/admin/enrollments?className=${selectedClassForDrawer.className}`);
-                      }}
-                      className="text-xs flex items-center gap-1 h-8"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Quản lý ghi danh</span>
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          navigate(`/admin/enrollments?className=${selectedClassForDrawer.className}`);
+                        }}
+                        className="text-xs flex items-center gap-1 h-8"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Quản lý ghi danh</span>
+                      </Button>
+                    )}
                   </div>
 
                   {isRosterLoading ? (

@@ -11,6 +11,8 @@ import '../../../core/storage/token_storage.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
+import '../../../core/utils/camera_image_converter.dart';
+import '../../../core/utils/face_biometric_logger.dart';
 import '../../../core/utils/head_pose_evaluator.dart';
 import '../../../shared/widgets/biometric_oval_overlay.dart';
 import '../../../shared/widgets/uni_card.dart';
@@ -29,12 +31,14 @@ class FaceEnrollmentView extends StatefulWidget {
   State<FaceEnrollmentView> createState() => _FaceEnrollmentViewState();
 }
 
-class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
+class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
+    with WidgetsBindingObserver {
   final AuthController authController = Get.isRegistered<AuthController>()
       ? Get.find<AuthController>()
       : Get.put(AuthController());
 
   late final AttendanceApiService _apiService;
+  late final FaceBiometricLogger _debugLogger;
 
   // View state: 'terms' or 'scan'
   bool _showTerms = true;
@@ -42,7 +46,14 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
   bool _isCameraInitialized = false;
-  bool _isProcessing = false;
+  bool _isStreaming = false;
+  bool _isProcessingFrame = false;
+  bool _isStepTransitioning = false;
+
+  int _framesReceivedCount = 0;
+  int _framesProcessedCount = 0;
+  DateTime _lastFrameProcessedTime = DateTime.fromMillisecondsSinceEpoch(0);
+  int _consecutiveValidFrames = 0;
 
   int _currentStep = 1; // 1: Frontal, 2: Left 15°, 3: Right 15°
   final List<Map<String, String>> _capturedSamples = [];
@@ -54,11 +65,13 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
   BiometricScanStatus _scanStatus = BiometricScanStatus.scanning;
 
   late final FaceDetector _faceDetector;
-  Timer? _continuousAnalysisTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _debugLogger = FaceBiometricLogger(tag: 'FaceEnrollment');
+
     final apiClient = Get.isRegistered<ApiClient>()
         ? Get.find<ApiClient>()
         : ApiClient(
@@ -77,6 +90,26 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
         performanceMode: FaceDetectorMode.accurate,
       ),
     );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _stopFrameStream();
+      _cameraController?.dispose();
+      _cameraController = null;
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = false;
+        });
+      }
+    } else if (state == AppLifecycleState.resumed && !_showTerms) {
+      _initializeCamera();
+    }
   }
 
   Future<void> _startLiveScan() async {
@@ -109,6 +142,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
         frontCamera,
         ResolutionPreset.medium,
         enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.nv21,
       );
 
       await _cameraController!.initialize();
@@ -119,134 +153,371 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
         _warningMessage = null;
         _instructionTitle = 'Nhìn thẳng vào giữa khung hình';
         _instructionSubtitle = 'Giữ yên tư thế để hệ thống quét tự động';
+        _scanStatus = BiometricScanStatus.scanning;
       });
 
-      _startContinuousAnalysisLoop();
-    } catch (e) {
+      _debugLogger.logCameraInitialized(
+        lensDirection: frontCamera.lensDirection,
+        resolutionPreset: ResolutionPreset.medium,
+        imageFormatGroup: ImageFormatGroup.nv21,
+      );
+
+      await _startFrameStream();
+    } catch (e, stack) {
+      _debugLogger.logError('Camera initialization failed', e, stack);
       if (mounted) {
         setState(() {
           _warningMessage = 'Lỗi truy cập Camera: $e';
+          _scanStatus = BiometricScanStatus.error;
         });
       }
     }
   }
 
-  void _startContinuousAnalysisLoop() {
-    _continuousAnalysisTimer?.cancel();
-    // Periodically capture frame and run head pose evaluation (NO manual shutter button!)
-    _continuousAnalysisTimer =
-        Timer.periodic(const Duration(milliseconds: 700), (_) async {
-      if (!_isCameraInitialized ||
-          _cameraController == null ||
-          !_cameraController!.value.isInitialized ||
-          _isProcessing ||
-          _currentStep > 3) {
-        return;
+  Future<void> _startFrameStream() async {
+    if (_isStreaming) return;
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    try {
+      _isStreaming = true;
+      _consecutiveValidFrames = 0;
+      await _cameraController!.startImageStream((CameraImage image) {
+        _processStreamFrame(image);
+      });
+      _debugLogger.logStreamStarted();
+    } catch (e, stack) {
+      _isStreaming = false;
+      _debugLogger.logError('Failed to start image stream', e, stack);
+      if (mounted) {
+        setState(() {
+          _warningMessage = 'Không thể khởi động luồng camera: $e';
+          _scanStatus = BiometricScanStatus.error;
+        });
       }
-      await _analyzeCurrentFrame();
-    });
+    }
   }
 
-  Future<void> _analyzeCurrentFrame() async {
-    if (_isProcessing || _cameraController == null) return;
-    _isProcessing = true;
-
-    XFile? imageFile;
+  Future<void> _stopFrameStream() async {
+    if (!_isStreaming) return;
     try {
-      imageFile = await _cameraController!.takePicture();
-      final inputImage = InputImage.fromFilePath(imageFile.path);
-      final List<Face> faces = await _faceDetector.processImage(inputImage);
+      if (_cameraController != null &&
+          _cameraController!.value.isInitialized &&
+          _cameraController!.value.isStreamingImages) {
+        await _cameraController!.stopImageStream();
+      }
+    } catch (e) {
+      _debugLogger.logNotice('Safe stop image stream: $e');
+    } finally {
+      _isStreaming = false;
+      _debugLogger.logStreamStopped();
+    }
+  }
 
-      final currentStepEnum = _currentStep == 1
+  void _processStreamFrame(CameraImage image) async {
+    _framesReceivedCount++;
+
+    // Guard: Drop frame if already processing, transitioning step, or view unmounted
+    if (!_isStreaming ||
+        _isProcessingFrame ||
+        _isStepTransitioning ||
+        !mounted ||
+        _currentStep > 3) {
+      return;
+    }
+
+    final now = DateTime.now();
+    // Throttle inference to 8-10 FPS (120ms between frames) to prevent emulator CPU stall
+    if (now.difference(_lastFrameProcessedTime).inMilliseconds < 120) {
+      return;
+    }
+    _lastFrameProcessedTime = now;
+    _isProcessingFrame = true;
+
+    try {
+      final frameStart = DateTime.now();
+      final controller = _cameraController;
+      if (controller == null || !controller.value.isInitialized) return;
+
+      final inputImage = CameraImageConverter.toInputImage(
+        image: image,
+        camera: controller.description,
+        deviceOrientation: controller.value.deviceOrientation,
+      );
+
+      if (inputImage == null) return;
+
+      final mlStart = DateTime.now();
+      final List<Face> faces = await _faceDetector.processImage(inputImage);
+      final mlDurationMs = DateTime.now().difference(mlStart).inMilliseconds;
+      _framesProcessedCount++;
+
+      final stepEnum = _currentStep == 1
           ? EnrollmentStep.frontal
           : (_currentStep == 2 ? EnrollmentStep.left : EnrollmentStep.right);
 
       final face = faces.isNotEmpty ? faces.first : null;
+      final yaw = face?.headEulerAngleY;
+      final pitch = face?.headEulerAngleX;
+      final roll = face?.headEulerAngleZ;
+
       final validation = HeadPoseEvaluator.validate(
-        step: currentStepEnum,
-        eulerY: face?.headEulerAngleY,
-        eulerX: face?.headEulerAngleX,
-        eulerZ: face?.headEulerAngleZ,
+        step: stepEnum,
+        eulerY: yaw,
+        eulerX: pitch,
+        eulerZ: roll,
         faceCount: faces.length,
       );
 
+      _debugLogger.logFrameStats(
+        framesReceived: _framesReceivedCount,
+        framesProcessed: _framesProcessedCount,
+        faceCount: faces.length,
+        yaw: yaw,
+        pitch: pitch,
+        roll: roll,
+        step: stepEnum.name,
+        mlKitDurationMs: mlDurationMs,
+        totalDurationMs: DateTime.now().difference(frameStart).inMilliseconds,
+      );
+
       if (!validation.isValid) {
-        if (mounted) {
-          setState(() {
-            _scanStatus = BiometricScanStatus.error;
-            _warningMessage = validation.warningMessage ?? validation.guideMessage;
-            if (faces.isEmpty) {
-              _sensorFeedbackText = 'Chưa phát hiện khuôn mặt';
-            } else if (faces.length > 1) {
-              _sensorFeedbackText = 'Phát hiện > 1 người trong khung hình!';
-            } else {
-              _sensorFeedbackText = 'Góc nghiêng chưa đạt chuẩn';
-            }
-          });
-        }
-        // Cleanup temp file
-        try {
-          File(imageFile.path).deleteSync();
-        } catch (_) {}
-        _isProcessing = false;
+        _consecutiveValidFrames = 0;
+        _debugLogger.logPoseEvaluated(
+          step: stepEnum.name,
+          isValid: false,
+          reason: validation.warningMessage ?? validation.guideMessage,
+          yaw: yaw,
+          pitch: pitch,
+          roll: roll,
+        );
+
+        _updateUiValidationState(
+          isValid: false,
+          warning: validation.warningMessage ?? validation.guideMessage,
+          facesCount: faces.length,
+        );
         return;
       }
 
-      // Valid pose detected! Record frame bytes and advance step
-      final bytes = await imageFile.readAsBytes();
-      final base64String = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+      // Valid pose detected for current step!
+      _consecutiveValidFrames++;
+      _updateUiValidationState(
+        isValid: true,
+        guideMessage: validation.guideMessage,
+        facesCount: faces.length,
+      );
 
-      final stepName = _currentStep == 1
-          ? 'frontal'
-          : (_currentStep == 2 ? 'left' : 'right');
-
-      _capturedSamples.add({
-        'step': stepName,
-        'imageBase64': base64String,
-      });
-
-      // Cleanup temp file
-      try {
-        File(imageFile.path).deleteSync();
-      } catch (_) {}
-
-      if (_currentStep < 3) {
-        if (mounted) {
-          setState(() {
-            _currentStep++;
-            _scanStatus = BiometricScanStatus.scanning;
-            _warningMessage = null;
-            if (_currentStep == 2) {
-              _instructionTitle = 'Từ từ quay mặt sang trái (15°)';
-              _instructionSubtitle = 'Nghiêng nhẹ mặt sang phía bên trái';
-            } else {
-              _instructionTitle = 'Từ từ quay mặt sang phải (15°)';
-              _instructionSubtitle = 'Nghiêng nhẹ mặt sang phía bên phải';
-            }
-            _sensorFeedbackText = 'Ánh sáng: Tốt • Khoảng cách: 35cm • Khớp 01 khuôn mặt';
-          });
-        }
-        _isProcessing = false;
-      } else {
-        // Complete 3 angles -> submit to backend
-        _continuousAnalysisTimer?.cancel();
-        if (mounted) {
-          setState(() {
-            _scanStatus = BiometricScanStatus.processing;
-            _instructionTitle = 'Đang trích xuất vector ArcFace 512 chiều...';
-            _instructionSubtitle = 'Đang đồng bộ hồ sơ sinh trắc học';
-            _warningMessage = null;
-          });
-        }
-        await _submitEnrollment();
+      // Require 2 consecutive valid frames (approx 240ms) to ensure pose stability
+      if (_consecutiveValidFrames >= 2) {
+        _consecutiveValidFrames = 0;
+        _handleStepPoseAccepted(stepEnum);
       }
-    } catch (e) {
+    } catch (e, stack) {
+      _debugLogger.logError('Frame analysis exception', e, stack);
+    } finally {
+      // Guaranteed reset to prevent frame processing flag from ever locking up
+      _isProcessingFrame = false;
+    }
+  }
+
+  void _updateUiValidationState({
+    required bool isValid,
+    String? warning,
+    String? guideMessage,
+    required int facesCount,
+  }) {
+    if (!mounted || _isStepTransitioning) return;
+
+    final newStatus =
+        isValid ? BiometricScanStatus.scanning : BiometricScanStatus.error;
+    final newWarning = warning;
+    final String newFeedback;
+    if (facesCount == 0) {
+      newFeedback = 'Chưa phát hiện khuôn mặt';
+    } else if (facesCount > 1) {
+      newFeedback = 'Phát hiện > 1 người trong khung hình!';
+    } else if (isValid) {
+      newFeedback = 'Ánh sáng: Tốt • Khoảng cách: 35cm • Góc mặt: Đạt chuẩn';
+    } else {
+      newFeedback = 'Góc nghiêng chưa đạt chuẩn';
+    }
+
+    // Only trigger setState if UI values meaningfully changed to prevent 30fps rebuild thrashing
+    if (_scanStatus != newStatus ||
+        _warningMessage != newWarning ||
+        _sensorFeedbackText != newFeedback) {
+      setState(() {
+        _scanStatus = newStatus;
+        _warningMessage = newWarning;
+        _sensorFeedbackText = newFeedback;
+        if (guideMessage != null) {
+          _instructionSubtitle = guideMessage;
+        }
+      });
+    }
+  }
+
+  Future<void> _handleStepPoseAccepted(EnrollmentStep stepEnum) async {
+    if (_isStepTransitioning) return;
+    _isStepTransitioning = true;
+
+    final currentStepNumber = _currentStep;
+    _debugLogger.logPoseEvaluated(
+      step: stepEnum.name,
+      isValid: true,
+      reason: 'Đạt chuẩn góc pose và duy trì ổn định',
+    );
+
+    if (mounted) {
+      setState(() {
+        _scanStatus = BiometricScanStatus.processing;
+        _warningMessage = null;
+        _instructionSubtitle =
+            'Đã khớp góc ${stepEnum.name}! Đang chụp ảnh mẫu $currentStepNumber/3...';
+      });
+    }
+
+    // Coordinated high-quality still capture
+    final sampleBase64 = await _safeCapturePhoto(stepEnum.name);
+    if (sampleBase64 == null) {
       if (mounted) {
         setState(() {
-          _warningMessage = 'Lỗi phân tích khung hình: $e';
+          _scanStatus = BiometricScanStatus.error;
+          _warningMessage =
+              'Không thể chụp ảnh mẫu bước $currentStepNumber. Vui lòng bấm Thử lại.';
+          _instructionSubtitle = 'Sự cố thiết bị chụp ảnh';
         });
       }
-      _isProcessing = false;
+      _isStepTransitioning = false;
+      // Restart streaming for retry
+      if (!_isStreaming &&
+          _cameraController != null &&
+          _cameraController!.value.isInitialized) {
+        await _startFrameStream();
+      }
+      return;
+    }
+
+    _capturedSamples.add({
+      'step': stepEnum.name,
+      'imageBase64': sampleBase64,
+    });
+
+    if (currentStepNumber < 3) {
+      final nextStep = currentStepNumber + 1;
+      _debugLogger.logStateTransition(
+        fromStep: 'Step $currentStepNumber (${stepEnum.name})',
+        toStep: 'Step $nextStep',
+      );
+
+      if (mounted) {
+        setState(() {
+          _currentStep = nextStep;
+          _scanStatus = BiometricScanStatus.scanning;
+          _warningMessage = null;
+          if (nextStep == 2) {
+            _instructionTitle = 'Từ từ quay mặt sang trái (15°)';
+            _instructionSubtitle = 'Nghiêng nhẹ mặt sang phía bên trái';
+          } else {
+            _instructionTitle = 'Từ từ quay mặt sang phải (15°)';
+            _instructionSubtitle = 'Nghiêng nhẹ mặt sang phía bên phải';
+          }
+          _sensorFeedbackText =
+              'Ánh sáng: Tốt • Khoảng cách: 35cm • Khớp 01 khuôn mặt';
+        });
+      }
+
+      _isStepTransitioning = false;
+      // Resume real-time stream for the next step
+      await _startFrameStream();
+    } else {
+      // All 3 angles completed!
+      _debugLogger.logStateTransition(
+        fromStep: 'Step 3 (${stepEnum.name})',
+        toStep: 'Enrollment Complete -> Backend submission',
+      );
+      await _stopFrameStream();
+
+      if (mounted) {
+        setState(() {
+          _scanStatus = BiometricScanStatus.processing;
+          _instructionTitle = 'Đang trích xuất vector ArcFace 512 chiều...';
+          _instructionSubtitle = 'Đang đồng bộ hồ sơ sinh trắc học';
+          _warningMessage = null;
+        });
+      }
+
+      await _submitEnrollment();
+    }
+  }
+
+  /// Coordinates still photo capture with CameraX image stream to prevent camera contention.
+  Future<String?> _safeCapturePhoto(String stepName) async {
+    final stopwatch = Stopwatch()..start();
+    _debugLogger.logCaptureStarted(step: stepName);
+
+    try {
+      // 1. Pause image stream to release CameraX ImageAnalysis lock
+      await _stopFrameStream();
+
+      // Brief delay to allow CameraCaptureSession to transition
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      if (_cameraController == null ||
+          !_cameraController!.value.isInitialized) {
+        throw Exception('CameraController is not ready');
+      }
+
+      // 2. Take still picture with 5-second safety timeout
+      final XFile photo = await _cameraController!.takePicture().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException('takePicture timed out after 5s'),
+      );
+
+      final bytes = await photo.readAsBytes();
+      final base64String = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+
+      // 3. Clean up temporary file from device storage
+      try {
+        final file = File(photo.path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+
+      stopwatch.stop();
+      _debugLogger.logCaptureCompleted(
+        step: stepName,
+        durationMs: stopwatch.elapsedMilliseconds,
+        byteSize: bytes.length,
+      );
+
+      return base64String;
+    } catch (e, stack) {
+      stopwatch.stop();
+      _debugLogger.logCaptureFailed(step: stepName, error: e);
+      _debugLogger.logError('Safe photo capture failed for $stepName', e, stack);
+      return null;
+    }
+  }
+
+  Future<void> _retryCurrentStep() async {
+    if (_isStepTransitioning) return;
+    setState(() {
+      _scanStatus = BiometricScanStatus.scanning;
+      _warningMessage = null;
+      _consecutiveValidFrames = 0;
+    });
+
+    if (!_isStreaming &&
+        _cameraController != null &&
+        _cameraController!.value.isInitialized) {
+      await _startFrameStream();
+    } else if (_cameraController == null ||
+        !_cameraController!.value.isInitialized) {
+      await _initializeCamera();
     }
   }
 
@@ -262,17 +533,30 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
         isReEnrollment: true,
       );
 
+      // Immediately synchronize reactive profile state across App
+      if (Get.isRegistered<AuthController>()) {
+        final authCtrl = Get.find<AuthController>();
+        authCtrl.updateFaceDataStatus('REGISTERED');
+        await authCtrl.refreshProfile();
+      }
+      if (Get.isRegistered<AttendanceController>()) {
+        final attCtrl = Get.find<AttendanceController>();
+        attCtrl.isFaceRegistered.value = true;
+        attCtrl.faceStatus.value = VerificationStatus.pass;
+      }
+
       if (mounted) {
-        // Navigate to Google Stitch Certificate Result View (replacing old AlertDialog!)
         Get.offNamed(
           AppRoutes.faceEnrollmentResult,
           arguments: result,
         );
       }
-    } catch (e) {
+    } catch (e, stack) {
+      _debugLogger.logError('Face enrollment API submission failed', e, stack);
       if (mounted) {
         setState(() {
-          _isProcessing = false;
+          _isProcessingFrame = false;
+          _isStepTransitioning = false;
           _scanStatus = BiometricScanStatus.error;
           _warningMessage = 'Đăng ký không thành công: $e';
         });
@@ -282,7 +566,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
 
   // Demo simulator for QA/emulator testing without front camera
   void _simulateStepProgression() {
-    if (_isProcessing) return;
+    if (_isProcessingFrame || _isStepTransitioning) return;
     _capturedSamples.add({
       'step': _currentStep == 1
           ? 'frontal'
@@ -309,9 +593,11 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
 
   @override
   void dispose() {
-    _continuousAnalysisTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _stopFrameStream();
     _faceDetector.close();
     _cameraController?.dispose();
+    _cameraController = null;
     super.dispose();
   }
 
@@ -669,6 +955,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
                     child: IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),
                       onPressed: () {
+                        _stopFrameStream();
                         setState(() {
                           _showTerms = true;
                         });
@@ -718,7 +1005,33 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView> {
             ),
           ),
 
-          // 4. Simulator quick switch button for testing environments without front camera
+          // 4. Retry Action Pill when error occurred during scan or capture
+          if (_scanStatus == BiometricScanStatus.error &&
+              _isCameraInitialized &&
+              !_isStepTransitioning)
+            Positioned(
+              bottom: 24,
+              left: 24,
+              right: 24,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: UniColors.warning,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: UniSpacing.borderRadiusMd,
+                  ),
+                ),
+                onPressed: _retryCurrentStep,
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                label: Text(
+                  'Thử lại bước $_currentStep/3',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+
+          // 5. Simulator quick switch button for testing environments without front camera
           if (!_isCameraInitialized)
             Positioned(
               bottom: 24,

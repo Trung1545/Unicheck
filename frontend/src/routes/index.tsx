@@ -270,11 +270,44 @@ export const AppRoutes: React.FC = () => {
       <Route
         path="/dashboard/classes"
         element={
-          <AdminRoute>
+          <ProtectedRoute>
             <MainLayout>
               <ClassSectionPage />
             </MainLayout>
-          </AdminRoute>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/lecturer/classes"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <ClassSectionPage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/student/classes"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <ClassSectionPage />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/classes"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <ClassSectionPage />
+            </MainLayout>
+          </ProtectedRoute>
         }
       />
 

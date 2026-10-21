@@ -63,6 +63,9 @@ class DashboardController extends GetxController {
       final authController = Get.isRegistered<AuthController>()
           ? Get.find<AuthController>()
           : null;
+      if (authController != null) {
+        await authController.refreshProfile();
+      }
       final studentId = authController?.user.value?.id;
 
       final results = await Future.wait([
