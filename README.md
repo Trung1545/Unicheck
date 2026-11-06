@@ -91,6 +91,13 @@ flutter run
 
 ---
 
+## 🔑 Tài Khoản Đăng Nhập & Dữ Liệu Kiểm Thử
+
+Xem chi tiết danh sách tài khoản Admin, Giảng viên, Sinh viên và kịch bản test mẫu tại:  
+👉 **[TEST_ACCOUNTS.md](TEST_ACCOUNTS.md)** *(Mật khẩu mặc định toàn hệ thống: `Password@123`)*
+
+---
+
 ## 🔒 Quy Ước Bảo Mật Dữ Liệu Sinh Trắc Học (Biometric Privacy)
 
 - Hệ thống tuân thủ nghiêm ngặt nguyên tắc bảo mật sinh trắc học quốc tế: **Tuyệt đối không lưu trữ ảnh khuôn mặt gốc của sinh viên trong cơ sở dữ liệu**.
