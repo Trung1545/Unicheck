@@ -72,9 +72,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMobileSidebar }) => {
 
           <div className="hidden sm:flex items-center gap-2 text-xs font-medium text-slate-500">
             <Shield className="w-4 h-4 text-primary-700" />
-            <span>Cổng Quản Trị Đào Tạo</span>
+            <span>Hệ thống quản lý và điểm danh</span>
             <span>/</span>
-            <span className="text-slate-900 font-semibold">UniCheck Biometric Hub</span>
+            <span className="text-slate-900 font-semibold">UniCheck</span>
           </div>
         </div>
 

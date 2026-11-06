@@ -90,7 +90,7 @@ export const ForgotPasswordPage: React.FC = () => {
                 <span className="text-primary-400">bảo vệ tài khoản học đường.</span>
               </h1>
               <p className="text-sm text-slate-300 leading-relaxed max-w-lg">
-                Hệ thống xác thực hai lớp đảm bảo thông tin cá nhân và dữ liệu điểm danh sinh viên của bạn luôn được bảo mật tuyệt đối theo chuẩn ISO 27001.
+                Hệ thống xác thực an toàn đảm bảo thông tin cá nhân và dữ liệu điểm danh của bạn luôn được bảo mật.
               </p>
             </div>
 
@@ -103,7 +103,7 @@ export const ForgotPasswordPage: React.FC = () => {
                 <div>
                   <h4 className="text-xs font-bold text-white">Xác nhận định danh email</h4>
                   <p className="text-[11px] text-slate-300">
-                    Nhập địa chỉ email trường học đã đăng ký trong hồ sơ đào tạo.
+                    Nhập địa chỉ email đã đăng ký trong hồ sơ tài khoản.
                   </p>
                 </div>
               </div>
@@ -199,7 +199,7 @@ export const ForgotPasswordPage: React.FC = () => {
                   </div>
                   <p className="text-[11px] text-slate-500 flex items-center gap-1 pt-0.5">
                     <HelpCircle className="w-3 h-3 text-slate-400" />
-                    Email đăng ký trong hồ sơ sinh viên hoặc cán bộ giảng viên.
+                    Email đăng ký trong hồ sơ tài khoản người dùng.
                   </p>
                 </div>
 

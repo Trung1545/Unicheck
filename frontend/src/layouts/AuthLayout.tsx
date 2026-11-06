@@ -21,12 +21,12 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
           </div>
           <div>
             <span className="font-bold text-lg text-white block leading-tight">UniCheck</span>
-            <span className="text-xs text-primary-300 block leading-tight">Biometric Attendance Ecosystem</span>
+            <span className="text-xs text-primary-300 block leading-tight">Hệ thống quản lý và điểm danh thông minh</span>
           </div>
         </div>
 
         <div className="text-xs text-slate-400 font-medium">
-          Đại học & Học viện Công nghệ
+          Điểm danh thông minh, quản lý dễ dàng
         </div>
       </header>
 
@@ -37,7 +37,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
 
       {/* Footer */}
       <footer className="relative z-10 p-6 text-center text-xs text-slate-500">
-        © 2024 - 2026 UniCheck. Hệ thống xác thực sinh trắc học và quản trị đào tạo đại học.
+        © 2024 - 2026 UniCheck. Hệ thống quản lý và điểm danh thông minh.
       </footer>
     </div>
   );

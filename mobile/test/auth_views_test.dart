@@ -108,10 +108,10 @@ void main() {
       await tester.pump();
 
       expect(find.text('UniCheck'), findsOneWidget);
-      expect(find.text('CỔNG QUẢN LÝ & ĐIỂM DANH ĐẠI HỌC'), findsOneWidget);
-      expect(find.text('Điểm danh thông minh, học tập hiệu quả'), findsOneWidget);
-      expect(find.text('HỆ THỐNG ĐIỂM DANH SINH TRẮC HỌC CHUẨN QUỐC GIA'), findsOneWidget);
-      expect(find.text('Mã hóa đầu-cuối AES-256'), findsOneWidget);
+      // Branding check
+      expect(find.text('Điểm danh thông minh, quản lý dễ dàng'), findsOneWidget);
+      expect(find.text('HỆ THỐNG QUẢN LÝ VÀ ĐIỂM DANH THÔNG MINH'), findsWidgets);
+      expect(find.text('Bảo mật kết nối an toàn'), findsOneWidget);
     });
 
     testWidgets('ForgotPasswordView: renders identity input and handles submission', (tester) async {
@@ -120,12 +120,12 @@ void main() {
 
       expect(find.text('Quên Mật Khẩu'), findsOneWidget);
       expect(find.text('Khôi phục quyền truy cập'), findsOneWidget);
-      expect(find.text('Mã định danh hoặc Email trường *'), findsOneWidget);
+      expect(find.text('Tên đăng nhập hoặc Email *'), findsOneWidget);
       expect(find.text('Tiếp tục'), findsOneWidget);
 
       // Enter email and submit
       final input = find.byType(TextField);
-      await tester.enterText(input, 'sv.2251120001@vnu.edu.vn');
+      await tester.enterText(input, 'sv.2251120001@unicheck.edu.vn');
       final submitBtn = find.text('Tiếp tục');
       await tester.tap(submitBtn);
       await tester.pumpAndSettle();

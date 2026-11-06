@@ -44,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 UniCheck
               </span>
               <span className="text-[11px] text-slate-500 block leading-tight font-medium">
-                Điểm danh Sinh trắc học
+                Điểm danh thông minh, quản lý dễ dàng
               </span>
             </div>
           </Link>
@@ -134,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </span>
         </div>
         <p className="text-[10px] text-slate-500 leading-tight">
-          Face-ID: 99.4% · 4 Cụm máy chủ hoạt động
+          Trạng thái hoạt động bình thường
         </p>
       </div>
     </div>

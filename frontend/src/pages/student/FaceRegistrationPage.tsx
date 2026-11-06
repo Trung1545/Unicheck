@@ -718,7 +718,7 @@ export const FaceRegistrationPage: React.FC = () => {
       />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 text-left">
-        {/* 1. Top Security & Privacy Guarantee Notice (Nghị định 13/2023/NĐ-CP & ISO 27001) */}
+        {/* 1. Top Security & Privacy Guarantee Notice (Nghị định 13/2023/NĐ-CP) */}
         <section className="bg-white rounded-2xl p-6 sm:p-7 shadow-sm border border-slate-200/80 relative overflow-hidden">
           <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none" />
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
@@ -732,7 +732,7 @@ export const FaceRegistrationPage: React.FC = () => {
                     Tuân thủ pháp lý cao cấp
                   </span>
                   <span className="text-xs text-slate-500 font-mono">
-                    Nghị định 13/2023/NĐ-CP • ISO/IEC 27001:2022
+                    Nghị định 13/2023/NĐ-CP • Bảo mật dữ liệu sinh trắc
                   </span>
                 </div>
                 <h2 className="text-xl font-bold text-slate-900 tracking-tight">

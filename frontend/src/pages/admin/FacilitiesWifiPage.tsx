@@ -1177,7 +1177,7 @@ export const FacilitiesWifiPage: React.FC = () => {
 
           <div className="flex items-center justify-between pt-3 text-slate-500 text-xs">
             <span>
-              Ghi chú: Toàn bộ AP đều được đồng bộ NTP Server của trường và áp dụng khóa mã hóa WPA3-Enterprise.
+              Ghi chú: Toàn bộ AP đều được đồng bộ thời gian máy chủ và bảo đảm an toàn kết nối mạng.
             </span>
             <button
               onClick={handleTriggerNetworkScan}

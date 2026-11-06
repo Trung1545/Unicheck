@@ -7,7 +7,6 @@ import { ResetPasswordPage } from '../pages/auth/ResetPasswordPage';
 import { ChangePasswordPage } from '../pages/auth/ChangePasswordPage';
 import { ProfilePage } from '../pages/profile/ProfilePage';
 import { DashboardPage } from '../pages/dashboard/DashboardPage';
-import { UiKitPage } from '../pages/uikit/UiKitPage';
 import { UserManagementPage } from '../pages/admin/UserManagementPage';
 import { CourseCatalogPage } from '../pages/admin/CourseCatalogPage';
 import { SemesterManagementPage } from '../pages/admin/SemesterManagementPage';
@@ -537,17 +536,7 @@ export const AppRoutes: React.FC = () => {
         }
       />
 
-      {/* 4. Internal UI Kit Showcase & Responsive Testing */}
-      <Route
-        path="/uikit"
-        element={
-          <MainLayout>
-            <UiKitPage />
-          </MainLayout>
-        }
-      />
-
-      {/* 5. Default Redirections */}
+      {/* 4. Default Redirections */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>

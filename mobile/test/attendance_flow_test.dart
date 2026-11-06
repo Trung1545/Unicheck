@@ -248,7 +248,7 @@ void main() {
     late DashboardController dashboardController;
     late AttendanceController attendanceController;
 
-    setUp(() {
+    setUp(() async {
       Get.reset();
       authController = Get.put(AuthController());
       authController.user.value = UserModel(
@@ -282,7 +282,7 @@ void main() {
       ];
 
       dashboardController = Get.put(DashboardController(apiService: mockDash));
-      dashboardController.loadDashboardData();
+      await dashboardController.loadDashboardData();
 
       attendanceController = Get.put(AttendanceController(
         apiService: MockAttendanceApiService(),

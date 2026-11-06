@@ -1,0 +1,21 @@
+services:
+  # ==============================================================================
+  # FRONTEND DEV OVERRIDE: Vite Hot-Reload with Volume Mount
+  # ==============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: unicheck_frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - PORT=80
+      - CHOKIDAR_USEPOLLING=true
+      - VITE_BACKEND_TARGET=http://backend:8080
+    depends_on:
+      - backend
+    networks:
+      - unicheck_network

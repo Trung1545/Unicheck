@@ -1,0 +1,22 @@
+# ==============================================================================
+# UniCheck - Frontend Dockerfile (Development Mode with Live Hot-Reload)
+# ==============================================================================
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Cache package dependencies
+COPY package.json package-lock.json ./
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Expose container port (matches port 80 in docker-compose.yml)
+EXPOSE 80
+
+ENV PORT=80
+
+# Launch Vite in host mode to allow external access through Docker network
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "80"]
+

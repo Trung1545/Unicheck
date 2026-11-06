@@ -140,7 +140,7 @@ class AttendanceFailureView extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'Hệ thống chưa thể ghi nhận kết quả do thông tin đối soát chưa đáp ứng tiêu chuẩn an toàn học đường của nhà trường.',
+          'Hệ thống chưa thể ghi nhận kết quả do thông tin đối soát chưa đáp ứng yêu cầu xác thực điểm danh.',
           textAlign: TextAlign.center,
           style: UniTypography.bodySmall.copyWith(
             color: UniColors.textSecondary,
@@ -229,7 +229,7 @@ class AttendanceFailureView extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Quy chế nhà trường yêu cầu sinh viên phải có mặt trực tiếp trong vùng phát sóng Wi-Fi phòng học để đảm bảo tính minh bạch.',
+                  'Quy chế yêu cầu sinh viên phải có mặt trực tiếp trong vùng phát sóng Wi-Fi phòng học để đảm bảo tính minh bạch.',
                   style: UniTypography.caption.copyWith(
                     color: UniColors.textSecondary,
                   ),

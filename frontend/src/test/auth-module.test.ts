@@ -132,7 +132,7 @@ test('5. Form Validation: Email Regex, Password Strength and OTP Constraints', (
 
   // Valid emails
   assert.equal(emailRegex.test('student01@unicheck.edu.vn'), true);
-  assert.equal(emailRegex.test('lecturer.cs@vnu.edu.vn'), true);
+  assert.equal(emailRegex.test('lecturer.cs@unicheck.edu.vn'), true);
   assert.equal(emailRegex.test('admin@unicheck.vn'), true);
 
   // Invalid emails
@@ -211,7 +211,7 @@ test('7. Profile Update Authorization Boundary: No Role or Permissions Tampering
 test('8. ErrorCode Dictionary & User-Friendly Vietnamese Mapping', () => {
   const errorMap: Record<string, string> = {
     ERR_2002: 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng thử lại.',
-    ERR_2003: 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Phòng Đào tạo.',
+    ERR_2003: 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Quản trị viên.',
     ERR_2004: 'Tài khoản chưa được kích hoạt trong hệ thống.',
     ERR_2007: 'Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 15 phút.',
     ERR_2008: 'Mã xác thực không chính xác hoặc đã hết hạn. Vui lòng quay lại lấy mã mới.',

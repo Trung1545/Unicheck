@@ -26,7 +26,7 @@ const getFriendlyErrorMessage = (err: any): string => {
     case 'ERR_2002':
       return 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng thử lại.';
     case 'ERR_2003':
-      return 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Phòng Đào tạo.';
+      return 'Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Quản trị viên.';
     case 'ERR_2004':
       return 'Tài khoản chưa được kích hoạt trong hệ thống.';
     case 'ERR_2007':
@@ -59,7 +59,7 @@ export const LoginPage: React.FC = () => {
 
     const trimmedUsername = username.trim();
     if (!trimmedUsername) {
-      setError('Vui lòng nhập mã số sinh viên, mã cán bộ hoặc email.');
+      setError('Vui lòng nhập tên đăng nhập hoặc email.');
       return;
     }
     if (!password) {
@@ -106,12 +106,12 @@ export const LoginPage: React.FC = () => {
           <div className="relative z-10 space-y-6">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-500/15 border border-primary-500/30 text-primary-300 text-xs font-semibold">
-                <School className="w-3.5 h-3.5" />
-                Hạ tầng Giáo dục Số 4.0
+                <ScanFace className="w-3.5 h-3.5" />
+                UniCheck
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Chuẩn VNU-HCM & ĐHQGHN
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Điểm danh thông minh
               </span>
             </div>
 
@@ -121,7 +121,7 @@ export const LoginPage: React.FC = () => {
                 <span className="text-primary-400">quản lý dễ dàng.</span>
               </h1>
               <p className="text-sm text-slate-300 leading-relaxed max-w-lg">
-                Nền tảng vận hành dữ liệu chuyên cần và lịch trình học vụ thời gian thực cho giảng đường số với độ trễ dưới 0.3s.
+                Hệ thống hỗ trợ quản lý lớp học, thời khóa biểu và điểm danh bằng QR động kết hợp nhận diện khuôn mặt.
               </p>
             </div>
 
@@ -134,10 +134,10 @@ export const LoginPage: React.FC = () => {
                     <ScanFace className="w-3.5 h-3.5 text-primary-400" />
                     AI FaceMatch
                   </span>
-                  <span className="text-xs font-mono font-bold text-emerald-400">Độ chuẩn 99.8%</span>
+                  <span className="text-xs font-mono font-bold text-emerald-400">Sinh trắc học</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-snug">
-                  Nhận diện đa khuôn mặt tức thì, đối soát sinh trắc học học phần với thuật toán Anti-spoofing tiên tiến.
+                  Nhận diện khuôn mặt kết hợp kiểm tra thực thể sống tự động và chính xác.
                 </p>
               </div>
 
@@ -148,10 +148,10 @@ export const LoginPage: React.FC = () => {
                     <QrCode className="w-3.5 h-3.5 text-accent-400" />
                     Dynamic QR
                   </span>
-                  <span className="text-xs font-mono text-slate-300">Làm mới 5s</span>
+                  <span className="text-xs font-mono text-slate-300">Thời gian thực</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-snug">
-                  Mã QR động xoay vòng kèm kiểm định Geofence Wi-Fi phòng học, ngăn chặn hoàn toàn gian lận điểm danh.
+                  Mã QR động xoay vòng kết hợp kiểm tra vị trí và Wi-Fi phòng học.
                 </p>
               </div>
             </div>
@@ -163,8 +163,8 @@ export const LoginPage: React.FC = () => {
                   <ShieldCheck className="w-4 h-4" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-white leading-tight">ISO/IEC 27001:2022</p>
-                  <p className="text-[11px] text-slate-400 leading-tight">Mã hóa AES-256 dữ liệu sinh viên</p>
+                  <p className="text-xs font-bold text-white leading-tight">Bảo mật thông tin</p>
+                  <p className="text-[11px] text-slate-400 leading-tight">Mã hóa an toàn dữ liệu học vụ</p>
                 </div>
               </div>
 
@@ -173,15 +173,15 @@ export const LoginPage: React.FC = () => {
                 <span>•</span>
                 <span className="text-accent-400">Giảng viên</span>
                 <span>•</span>
-                <span className="text-slate-200">Quản trị</span>
+                <span className="text-slate-200">Quản trị viên</span>
               </div>
             </div>
           </div>
 
           {/* Left Footer */}
           <div className="relative z-10 pt-6 mt-6 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Trung tâm Khảo thí & Đảm bảo Chất lượng</span>
-            <span className="font-mono font-medium">Phiên bản v4.2.8 Enterprise</span>
+            <span>UniCheck</span>
+            <span className="font-mono font-medium">Hệ thống quản lý và điểm danh thông minh</span>
           </div>
         </div>
 
@@ -197,7 +197,7 @@ export const LoginPage: React.FC = () => {
                 Đăng nhập hệ thống
               </h2>
               <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-                Sử dụng tài khoản VNU / UniCheck được cấp bởi Phòng Đào tạo & CTSV.
+                Nhập thông tin tài khoản để tiếp tục.
               </p>
             </div>
 
@@ -221,7 +221,7 @@ export const LoginPage: React.FC = () => {
                     htmlFor="login-username"
                     className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
                   >
-                    Mã số sinh viên / Email cán bộ
+                    Tên đăng nhập
                   </label>
                   <span className="text-[11px] text-primary-700 font-semibold">Bắt buộc</span>
                 </div>
@@ -236,7 +236,7 @@ export const LoginPage: React.FC = () => {
                     autoComplete="username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Nhập MSSV, mã cán bộ hoặc email trường..."
+                    placeholder="Nhập tên đăng nhập của bạn..."
                     required
                     disabled={loading}
                     className="w-full h-11 pl-9 pr-3.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-primary-600 focus:ring-2 focus:ring-primary-500/15 transition-all"
@@ -251,9 +251,9 @@ export const LoginPage: React.FC = () => {
                     htmlFor="login-password"
                     className="block text-xs font-semibold uppercase tracking-wider text-slate-700"
                   >
-                    Mật khẩu truy cập
+                    Mật khẩu
                   </label>
-                  <span className="text-[11px] text-slate-400 font-medium">SSO Gateway</span>
+                  <span className="text-[11px] text-primary-700 font-semibold">Bắt buộc</span>
                 </div>
                 <div className="relative rounded-lg shadow-sm">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -306,7 +306,7 @@ export const LoginPage: React.FC = () => {
                   </div>
                 ) : (
                   <>
-                    <span>Đăng nhập hệ thống</span>
+                    <span>Đăng nhập</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -317,7 +317,7 @@ export const LoginPage: React.FC = () => {
           {/* Bottom Security Note */}
           <div className="mt-8 pt-4 border-t border-slate-100 space-y-2 text-center">
             <p className="text-xs text-slate-500">
-              Cổng xác thực sinh viên, giảng viên và cán bộ quản trị học viện.
+              Hệ thống dành cho Quản trị viên, Giảng viên và Sinh viên.
             </p>
             <div className="flex items-center justify-center gap-3 text-[11px] text-slate-400">
               <span className="flex items-center gap-1">

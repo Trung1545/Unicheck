@@ -61,7 +61,7 @@ export interface LoginResponse {
   code: string;               // MSSV / MSG / MSNV
   username: string;           // Tên đăng nhập
   fullName: string;           // Họ và tên hiển thị
-  email: string;              // Email học viện
+  email: string;              // Email tài khoản
   role: Role;                 // Phân quyền (ADMIN | LECTURER | STUDENT)
   isPasswordChanged: boolean; // Trạng thái đã đổi mật khẩu lần đầu
 }

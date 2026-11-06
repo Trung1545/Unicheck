@@ -106,7 +106,7 @@ export const ResetPasswordPage: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-500/15 border border-primary-500/30 text-primary-300 text-xs font-semibold">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Tiêu chuẩn Mật khẩu Học viện
+                Tiêu chuẩn An toàn Mật khẩu
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
                 Bảo vệ 2 Lớp

@@ -172,7 +172,7 @@ class FaceEnrollmentResultView extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              'Học viện Chứng nhận Sinh trắc học',
+                              'Chứng nhận Sinh trắc học',
                               style: UniTypography.caption.copyWith(
                                 color: UniColors.secondary,
                                 fontWeight: FontWeight.bold,
@@ -192,7 +192,7 @@ class FaceEnrollmentResultView extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Mẫu vector sinh trắc học đã được mã hóa và đồng bộ thành công vào cơ sở dữ liệu học vụ của Nhà trường.',
+                        'Mẫu vector sinh trắc học đã được mã hóa và đồng bộ thành công vào hệ thống học vụ.',
                         style: UniTypography.bodySmall.copyWith(
                           color: UniColors.textSecondary,
                           height: 1.4,

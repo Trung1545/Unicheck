@@ -1,7 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 import {
-  Users,
   Calendar,
   CheckCircle2,
   Cpu,
@@ -9,10 +7,8 @@ import {
   Activity,
   Layers,
   ChevronRight,
-  Palette,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth-store';
-import { Button } from '../../common-ui';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuthStore();
@@ -21,7 +17,7 @@ export const DashboardPage: React.FC = () => {
     { label: 'Tổng số lớp học', value: '48', icon: Layers, color: 'text-primary-700', bg: 'bg-primary-50' },
     { label: 'Ca học hôm nay', value: '12', icon: Calendar, color: 'text-cyan-600', bg: 'bg-cyan-50' },
     { label: 'Sinh viên đã điểm danh', value: '384', icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Độ chính xác AI Face', value: '99.4%', icon: Cpu, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { label: 'Trạng thái AI Face', value: 'Hoạt động', icon: Cpu, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   ];
 
   const recentSessions = [
@@ -32,28 +28,6 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="space-y-6 text-left">
-      {/* UI Kit Banner Link for Development & Verification */}
-      <div className="bg-primary-50 border border-primary-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-primary-700 text-white flex items-center justify-center shrink-0">
-            <Palette className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-primary-900 leading-tight">
-              Giai đoạn 2: Design System & App Shell đã sẵn sàng
-            </h4>
-            <p className="text-xs text-primary-700 leading-tight mt-0.5">
-              Khám phá toàn bộ 12 Atomic Components và thử nghiệm phân quyền ngay tại UI Kit Showcase.
-            </p>
-          </div>
-        </div>
-        <Link to="/uikit">
-          <Button variant="primary" size="sm" rightIcon={<ChevronRight className="w-3.5 h-3.5" />}>
-            Xem UI Kit Showcase
-          </Button>
-        </Link>
-      </div>
-
       {/* Welcome Banner */}
       <div className="bg-white p-6 rounded-xl border border-slate-200/90 shadow-sm relative overflow-hidden">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

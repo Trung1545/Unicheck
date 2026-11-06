@@ -17,7 +17,9 @@ import '../../../core/utils/head_pose_evaluator.dart';
 import '../../../shared/widgets/biometric_oval_overlay.dart';
 import '../../../shared/widgets/uni_card.dart';
 import '../../../shared/widgets/uni_primary_button.dart';
+import '../../../shared/widgets/verification_check_item.dart';
 import '../../auth/controllers/auth_controller.dart';
+import '../controllers/attendance_controller.dart';
 import '../services/attendance_api_service.dart';
 
 /// UniCheck Face-ID Enrollment View
@@ -803,7 +805,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Tuân thủ nghiêm ngặt Nghị định 13/2023/NĐ-CP và tiêu chuẩn an toàn ISO/IEC 27001:',
+                      'Tuân thủ nghiêm ngặt Nghị định 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân:',
                       style: UniTypography.bodySmall.copyWith(
                           color: UniColors.textSecondary),
                     ),

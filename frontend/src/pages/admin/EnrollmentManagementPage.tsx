@@ -1130,7 +1130,7 @@ export const EnrollmentManagementPage: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="font-bold text-base text-on-surface">Tải lên danh sách ghi danh hàng loạt</h3>
-                    <span className="text-xs text-on-surface-variant">Định dạng file: .xlsx hoặc .csv theo mẫu phòng Đào tạo</span>
+                    <span className="text-xs text-on-surface-variant">Định dạng file: .xlsx hoặc .csv theo mẫu quy chuẩn của hệ thống</span>
                   </div>
                 </div>
                 <button

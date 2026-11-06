@@ -107,9 +107,9 @@ export const ProfilePage: React.FC = () => {
   };
 
   const roleLabelMap: Record<string, string> = {
-    ADMIN: 'Quản trị viên Học viện',
-    LECTURER: 'Giảng viên Đào tạo',
-    STUDENT: 'Sinh viên Chính quy',
+    ADMIN: 'Quản trị viên',
+    LECTURER: 'Giảng viên',
+    STUDENT: 'Sinh viên',
   };
 
   if (loading) {
@@ -308,7 +308,7 @@ export const ProfilePage: React.FC = () => {
               </div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold">
                 <Lock className="w-3.5 h-3.5 text-slate-400" />
-                <span>Chỉ do Phòng Đào tạo quản lý</span>
+                <span>Chỉ do Quản trị viên quản lý</span>
               </div>
             </div>
 
@@ -342,7 +342,7 @@ export const ProfilePage: React.FC = () => {
               {/* Academic Email */}
               <div className="sm:col-span-2 space-y-1">
                 <span className="font-semibold text-slate-500 uppercase tracking-wider text-[11px]">
-                  Tài khoản Email Học viện (.edu.vn)
+                  Tài khoản Email hệ thống (.edu.vn)
                 </span>
                 <div className="h-10 px-3.5 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between text-slate-900">
                   <div className="flex items-center gap-2">
@@ -350,7 +350,7 @@ export const ProfilePage: React.FC = () => {
                     <span>{profile?.email || 'user@unicheck.edu.vn'}</span>
                   </div>
                   <span className="px-2 py-0.5 rounded bg-primary-100 text-primary-800 font-bold text-[10px]">
-                    Primary Academic SSO
+                    Primary Account
                   </span>
                 </div>
               </div>

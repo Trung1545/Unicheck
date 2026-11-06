@@ -163,14 +163,14 @@ class _LoginViewState extends State<LoginView> {
               ),
               const SizedBox(height: UniSpacing.spaceMd),
               Text(
-                'Cổng Xác Thực VNU SSO',
+                'Đăng nhập Một Lần (SSO)',
                 style: UniTypography.titleMedium.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: UniSpacing.spaceXs),
               Text(
-                'Tính năng tích hợp Single Sign-On với email trường (@edu.vn / VNU ID) đang trong lộ trình đồng bộ bảo mật của nhà trường.\n\nTrong thời gian này, vui lòng sử dụng Mã số sinh viên và Mật khẩu được cấp để đăng nhập hệ thống.',
+                'Tính năng tích hợp Single Sign-On (SSO) đang được hoàn thiện.\n\nVui lòng sử dụng Tên đăng nhập và Mật khẩu được cấp để đăng nhập hệ thống.',
                 textAlign: TextAlign.center,
                 style: UniTypography.bodyMedium.copyWith(
                   color: UniColors.textSecondary,
@@ -494,7 +494,7 @@ class _LoginViewState extends State<LoginView> {
                               const SizedBox(width: UniSpacing.spaceSm),
                               Flexible(
                                 child: Text(
-                                  'Cổng xác thực VNU / Email trường (@edu.vn)',
+                                  'Đăng nhập tài khoản trường (@edu.vn)',
                                   style: UniTypography.labelMedium.copyWith(
                                     color: UniColors.textPrimary,
                                     fontWeight: FontWeight.w600,
@@ -524,7 +524,7 @@ class _LoginViewState extends State<LoginView> {
                         color: UniColors.statusPresent,
                       ),
                       Text(
-                        'Chuẩn ISO/IEC 27001 • SSL/TLS 256-bit',
+                        'Bảo mật kết nối SSL/TLS 256-bit',
                         style: UniTypography.bodySmall.copyWith(
                           color: UniColors.textSecondary,
                         ),

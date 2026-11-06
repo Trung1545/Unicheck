@@ -819,7 +819,7 @@ export const SemesterManagementPage: React.FC = () => {
           </div>
           <div className="text-xl font-bold text-slate-900">SHA-256 Checksum</div>
           <p className="text-xs text-slate-500">
-            Mọi thao tác khóa sổ học kỳ được niêm phong mật mã vào Sổ nhật ký kiểm định đào tạo của Trường Đại học.
+            Mọi thao tác khóa sổ học kỳ được ghi nhận đầy đủ vào nhật ký kiểm định của hệ thống.
           </p>
         </div>
       </div>

@@ -1184,18 +1184,18 @@ export const UserManagementPage: React.FC = () => {
                 {/* Email công vụ */}
                 <div className="space-y-1.5">
                   <label className="font-semibold text-slate-800">
-                    Email học viện / công vụ <span className="text-red-500">*</span>
+                    Email người dùng <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="email"
                     disabled={drawerMode === 'view'}
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="hoang.nv@student.unihcm.edu.vn"
+                    placeholder="user@unicheck.edu.vn"
                     className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-slate-50/50 text-slate-900 focus:bg-white focus:border-primary-500 outline-none transition-all disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="text-xs text-slate-400">
-                    Định dạng khuyến nghị: @unihcm.edu.vn hoặc @student.unihcm.edu.vn
+                    Định dạng: email hợp lệ (ví dụ: user@unicheck.edu.vn)
                   </span>
                   {formErrors.email && (
                     <span className="text-xs text-red-500 block">{formErrors.email}</span>

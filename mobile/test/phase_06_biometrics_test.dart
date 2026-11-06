@@ -275,7 +275,7 @@ void main() {
 
       // Top bar & Headline
       expect(find.text('Kết Quả Xác Thực'), findsOneWidget);
-      expect(find.text('Học viện Chứng nhận Sinh trắc học'), findsOneWidget);
+      expect(find.text('Chứng nhận Sinh trắc học'), findsOneWidget);
       expect(find.text('Đăng ký Face-ID thành công!'), findsOneWidget);
 
       // Certificate Card elements

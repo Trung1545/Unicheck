@@ -240,7 +240,7 @@ class AttendanceEligibilityView extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Xác thực tuân thủ tiêu chuẩn an toàn học đường ISO/IEC 27001. Nghiêm cấm mọi hành vi điểm danh hộ.',
+              'Xác thực tuân thủ tiêu chuẩn an toàn dữ liệu. Nghiêm cấm mọi hành vi điểm danh hộ.',
               style: UniTypography.caption.copyWith(
                 color: UniColors.primaryDark,
                 fontWeight: FontWeight.w500,

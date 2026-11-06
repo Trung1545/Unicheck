@@ -144,7 +144,7 @@ void main() {
     late AuthController authController;
     late DashboardController dashboardController;
 
-    setUp(() {
+    setUp(() async {
       Get.reset();
       authController = Get.put(AuthController());
       authController.user.value = UserModel(
@@ -188,7 +188,7 @@ void main() {
       ];
 
       dashboardController = Get.put(DashboardController(apiService: mockService));
-      dashboardController.loadDashboardData();
+      await dashboardController.loadDashboardData();
     });
 
     tearDown(() {

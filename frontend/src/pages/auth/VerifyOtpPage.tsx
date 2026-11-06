@@ -234,8 +234,8 @@ export const VerifyOtpPage: React.FC = () => {
           </div>
 
           <div className="relative z-10 pt-6 mt-6 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-            <span>UniCheck Two-Factor Guard</span>
-            <span className="font-mono">Chuẩn ISO 27001</span>
+            <span>UniCheck Security Guard</span>
+            <span className="font-mono">Bảo mật đa lớp</span>
           </div>
         </div>
 

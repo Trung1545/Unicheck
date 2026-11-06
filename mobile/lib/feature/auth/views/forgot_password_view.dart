@@ -222,10 +222,10 @@ class _ForgotPasswordViewState extends State<ForgotPasswordView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               UniTextField(
-                label: 'Mã định danh hoặc Email trường *',
-                hint: 'VD: 2251120001 hoặc sv@vnu.edu.vn',
+                label: 'Tên đăng nhập hoặc Email *',
+                hint: 'VD: 2251120001 hoặc user@unicheck.edu.vn',
                 helperText:
-                    'Chỉ áp dụng cho tài khoản đã được cấp trong hệ thống đào tạo.',
+                    'Chỉ áp dụng cho tài khoản đã được cấp trong hệ thống.',
                 controller: identityController,
                 prefixIcon: Icons.badge_outlined,
                 showClearButton: true,
@@ -266,7 +266,7 @@ class _ForgotPasswordViewState extends State<ForgotPasswordView> {
                           ),
                           const SizedBox(height: UniSpacing.spaceSm),
                           Text(
-                            'Nếu bạn quên địa chỉ email trường hoặc mất quyền truy cập vào hộp thư học bạ, vui lòng liên hệ trực tiếp Văn phòng Đào tạo tại cơ sở học tập cùng Thẻ sinh viên để được cấp lại mật khẩu.',
+                            'Nếu bạn quên địa chỉ email hoặc mất quyền truy cập vào tài khoản, vui lòng liên hệ quản trị viên để được cấp lại mật khẩu.',
                             style: UniTypography.bodyMedium.copyWith(
                               color: UniColors.textSecondary,
                             ),
@@ -287,7 +287,7 @@ class _ForgotPasswordViewState extends State<ForgotPasswordView> {
                   color: UniColors.primary,
                 ),
                 label: Text(
-                  'Cần trợ giúp học vụ? Liên hệ Phòng Đào tạo',
+                  'Cần trợ giúp? Liên hệ Quản trị viên',
                   style: UniTypography.labelMedium.copyWith(
                     color: UniColors.primary,
                   ),
@@ -474,7 +474,7 @@ class _ForgotPasswordViewState extends State<ForgotPasswordView> {
           ),
         ),
         Text(
-          '• Tiêu chuẩn ISO/IEC 27001',
+          '• Bảo mật tài khoản đa lớp',
           style: UniTypography.labelSmall.copyWith(
             color: UniColors.textMuted,
           ),

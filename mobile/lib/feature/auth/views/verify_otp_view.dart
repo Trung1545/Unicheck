@@ -35,7 +35,7 @@ class _VerifyOtpViewState extends State<VerifyOtpView> {
     super.initState();
     controller = Get.find<AuthController>();
     final args = Get.arguments as Map<String, dynamic>?;
-    email = args?['email'] as String? ?? 'sv@vnu.edu.vn';
+    email = args?['email'] as String? ?? 'user@unicheck.edu.vn';
     _startTimer();
   }
 
@@ -532,14 +532,14 @@ class _VerifyOtpViewState extends State<VerifyOtpView> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Liên Hệ Phòng Đào Tạo',
+                                    'Liên Hệ Hỗ Trợ Kỹ Thuật',
                                     style: UniTypography.titleMedium.copyWith(
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                   const SizedBox(height: UniSpacing.spaceSm),
                                   Text(
-                                    'Địa điểm: Văn phòng Đào tạo (P.101 Nhà A1)\nHotline: 028.3865.2442\nEmail hỗ trợ: daotao@unicheck.edu.vn',
+                                    'Email hỗ trợ: support@unicheck.edu.vn\nHotline: 1900 6868',
                                     style: UniTypography.bodyMedium.copyWith(
                                       color: UniColors.textPrimary,
                                       height: 1.5,
@@ -558,7 +558,7 @@ class _VerifyOtpViewState extends State<VerifyOtpView> {
                         child: Row(
                           children: [
                             Text(
-                              'Phòng Đào Tạo',
+                              'Hỗ Trợ Kỹ Thuật',
                               style: UniTypography.labelMedium.copyWith(
                                 color: UniColors.primary,
                                 fontWeight: FontWeight.bold,

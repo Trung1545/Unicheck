@@ -70,7 +70,7 @@ class _SplashViewState extends State<SplashView> {
                     ),
                     const SizedBox(width: UniSpacing.spaceXs),
                     Text(
-                      'HỆ THỐNG ĐIỂM DANH SINH TRẮC HỌC CHUẨN QUỐC GIA',
+                      'HỆ THỐNG QUẢN LÝ VÀ ĐIỂM DANH THÔNG MINH',
                       style: UniTypography.labelSmall.copyWith(
                         color: UniColors.textSecondary,
                         fontSize: 10,
@@ -140,7 +140,7 @@ class _SplashViewState extends State<SplashView> {
                   ),
                   const SizedBox(height: UniSpacing.spaceXs),
                   Text(
-                    'CỔNG QUẢN LÝ & ĐIỂM DANH ĐẠI HỌC',
+                    'HỆ THỐNG QUẢN LÝ VÀ ĐIỂM DANH THÔNG MINH',
                     style: UniTypography.labelSmall.copyWith(
                       color: UniColors.textSecondary,
                       letterSpacing: 1.5,
@@ -149,7 +149,7 @@ class _SplashViewState extends State<SplashView> {
                   ),
                   const SizedBox(height: UniSpacing.spaceSm),
                   Text(
-                    'Điểm danh thông minh, học tập hiệu quả',
+                    'Điểm danh thông minh, quản lý dễ dàng',
                     style: UniTypography.bodyMedium.copyWith(
                       color: UniColors.textSecondary,
                     ),
@@ -278,7 +278,7 @@ class _SplashViewState extends State<SplashView> {
                       ),
                       const SizedBox(width: UniSpacing.spaceXs),
                       Text(
-                        'Mã hóa đầu-cuối AES-256',
+                        'Bảo mật kết nối an toàn',
                         style: UniTypography.labelSmall.copyWith(
                           color: UniColors.textMuted,
                         ),
@@ -287,7 +287,7 @@ class _SplashViewState extends State<SplashView> {
                   ),
                   const SizedBox(height: UniSpacing.spaceXs),
                   Text(
-                    'Phiên bản 2.4.0 • Tiêu chuẩn ISO/IEC 27001 & Nghị định 13/2023/NĐ-CP',
+                    'Phiên bản 2.4.0 • Nghị định 13/2023/NĐ-CP',
                     textAlign: TextAlign.center,
                     style: UniTypography.labelSmall.copyWith(
                       color: UniColors.textMuted,

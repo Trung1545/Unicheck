@@ -705,4 +705,79 @@ public class TimetableIntegrationTest {
                 .andExpect(jsonPath("$.data.totalSlotsWeek", notNullValue()))
                 .andExpect(jsonPath("$.data.roomUtilizationRate", notNullValue()));
     }
+
+    // =========================================================================
+    // Test 14: Enum Compliance and Timetable Slots Query (BUG-02 Regression Test)
+    // =========================================================================
+
+    @Test
+    @DisplayName("14. Truy vấn danh sách tiết học với các trạng thái hợp lệ (SCHEDULED, COMPLETED, CANCELLED, RESCHEDULED)")
+    void testTimetableSlotsWithValidStatuses() throws Exception {
+        LocalDate baseDate = LocalDate.of(2026, 11, 9);
+
+        // 1. SCHEDULED slot (trước đây từng bị nhầm thành IN_PROGRESS gây lỗi 500 BUG-02)
+        timetableSlotRepository.save(TimetableSlot.builder()
+                .classSection(classSection1)
+                .room(roomA)
+                .date(baseDate)
+                .dayOfWeek(1)
+                .slotNumber(1)
+                .status(TimetableSlotStatus.SCHEDULED)
+                .build());
+
+        // 2. COMPLETED slot
+        timetableSlotRepository.save(TimetableSlot.builder()
+                .classSection(classSection1)
+                .room(roomA)
+                .date(baseDate.plusDays(1))
+                .dayOfWeek(2)
+                .slotNumber(2)
+                .status(TimetableSlotStatus.COMPLETED)
+                .build());
+
+        // 3. CANCELLED slot
+        timetableSlotRepository.save(TimetableSlot.builder()
+                .classSection(classSection1)
+                .room(roomA)
+                .date(baseDate.plusDays(2))
+                .dayOfWeek(3)
+                .slotNumber(3)
+                .status(TimetableSlotStatus.CANCELLED)
+                .build());
+
+        // 4. RESCHEDULED slot
+        timetableSlotRepository.save(TimetableSlot.builder()
+                .classSection(classSection1)
+                .room(roomA)
+                .date(baseDate.plusDays(3))
+                .dayOfWeek(4)
+                .slotNumber(4)
+                .status(TimetableSlotStatus.RESCHEDULED)
+                .build());
+
+        // Truy vấn tất cả các slots trong tuần: Phải trả về HTTP 200, không bị lỗi 500 do enum mismatch
+        mockMvc.perform(get("/api/v1/timetable/slots")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("startDate", "2026-11-09")
+                        .param("endDate", "2026-11-15"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data", hasSize(4)))
+                .andExpect(jsonPath("$.data[?(@.status == 'SCHEDULED')]", hasSize(1)))
+                .andExpect(jsonPath("$.data[?(@.status == 'COMPLETED')]", hasSize(1)))
+                .andExpect(jsonPath("$.data[?(@.status == 'CANCELLED')]", hasSize(1)))
+                .andExpect(jsonPath("$.data[?(@.status == 'RESCHEDULED')]", hasSize(1)));
+
+        // Lọc theo status=SCHEDULED
+        mockMvc.perform(get("/api/v1/timetable/slots")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("startDate", "2026-11-09")
+                        .param("endDate", "2026-11-15")
+                        .param("status", "SCHEDULED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data", hasSize(1)))
+                .andExpect(jsonPath("$.data[0].status", is("SCHEDULED")));
+    }
 }
+

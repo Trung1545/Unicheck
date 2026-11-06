@@ -27,7 +27,7 @@ import { useAuthStore } from '../../store/auth-store';
 import { getAttendanceConfigApi, updateAttendanceConfigApi } from '../../api/attendance.api';
 import { AttendanceConfigDto } from '../../types/api';
 
-const DEFAULT_VNU_CONFIG: AttendanceConfigDto = {
+const DEFAULT_ATTENDANCE_CONFIG: AttendanceConfigDto = {
   configKey: 'DEFAULT',
   qrRotationIntervalSeconds: 5,
   ticketTtlSeconds: 90,
@@ -47,8 +47,8 @@ const DEFAULT_VNU_CONFIG: AttendanceConfigDto = {
 
 export const AttendanceConfigPage: React.FC = () => {
   const user = useAuthStore((state) => state.user);
-  const [config, setConfig] = useState<AttendanceConfigDto>(DEFAULT_VNU_CONFIG);
-  const [initialConfig, setInitialConfig] = useState<AttendanceConfigDto>(DEFAULT_VNU_CONFIG);
+  const [config, setConfig] = useState<AttendanceConfigDto>(DEFAULT_ATTENDANCE_CONFIG);
+  const [initialConfig, setInitialConfig] = useState<AttendanceConfigDto>(DEFAULT_ATTENDANCE_CONFIG);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -84,7 +84,7 @@ export const AttendanceConfigPage: React.FC = () => {
   };
 
   const handleResetToStandard = () => {
-    setConfig(DEFAULT_VNU_CONFIG);
+    setConfig(DEFAULT_ATTENDANCE_CONFIG);
     setIsDirty(true);
   };
 
@@ -149,7 +149,7 @@ export const AttendanceConfigPage: React.FC = () => {
               className="h-10 px-4 rounded-lg bg-white border border-slate-200 text-slate-700 font-medium text-sm hover:bg-slate-50 transition-colors flex items-center gap-2 shadow-sm"
             >
               <RotateCcw className="w-4 h-4 text-slate-500" />
-              <span>Khôi phục chuẩn ĐHQG</span>
+              <span>Khôi phục mặc định</span>
             </button>
 
             {isDirty && (
@@ -332,13 +332,13 @@ export const AttendanceConfigPage: React.FC = () => {
                   <Lock className="w-5 h-5 text-blue-600 shrink-0" />
                   <div>
                     <span className="font-semibold text-slate-900">
-                      Giao thức mật mã: AES-256 GCM w/ ECDSA Signing
+                      Giao thức mật mã: QR Token Payload Signing
                     </span>
                     <span className="text-slate-500 block">Khóa xoay vòng 24h. Payload chống dịch ngược.</span>
                   </div>
                 </div>
                 <span className="px-2.5 py-1 rounded-md bg-white border border-slate-200 font-mono font-bold text-slate-700 text-[11px]">
-                  FIPS 140-3 HSM
+                  Bảo mật cao
                 </span>
               </div>
             </div>
@@ -396,7 +396,7 @@ export const AttendanceConfigPage: React.FC = () => {
 
                 <div className="flex justify-between font-mono text-[11px] text-slate-500">
                   <span>70% (Lỏng lẻo)</span>
-                  <span className="text-blue-700 font-bold">85% (Tiêu chuẩn ĐHQG)</span>
+                  <span className="text-blue-700 font-bold">85% (Khuyến nghị)</span>
                   <span>99% (Cực đoan)</span>
                 </div>
 
