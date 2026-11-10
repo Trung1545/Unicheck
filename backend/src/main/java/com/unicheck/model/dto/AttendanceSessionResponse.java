@@ -34,6 +34,7 @@ public class AttendanceSessionResponse {
     private LocalTime startTime;
     private LocalTime endTime;
     private AttendanceSessionStatus status;
+    private Integer qrRotationIntervalSeconds;
     private LocalDateTime openedAt;
     private LocalDateTime closedAt;
     private LocalDateTime createdAt;

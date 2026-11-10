@@ -39,7 +39,9 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -60,6 +62,21 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
     private final FaceEncodingRepository faceEncodingRepository;
     private final RoomWifiAccessPointRepository roomWifiAccessPointRepository;
     private final AiServiceClient aiServiceClient;
+    private final com.unicheck.service.StaticTestQrService staticTestQrService;
+    private final com.unicheck.service.DynamicQrService dynamicQrService;
+    private final com.unicheck.service.WifiSimulationService wifiSimulationService;
+    private final AttendanceAdjustmentHistoryRepository attendanceAdjustmentHistoryRepository;
+    private final AttendanceRecheckRequestRepository attendanceRecheckRequestRepository;
+    private final AttendanceVerificationAttemptRepository attendanceVerificationAttemptRepository;
+    private final com.unicheck.service.AttendanceVerificationAttemptService attendanceVerificationAttemptService;
+    private final UserRepository userRepository;
+    private final com.unicheck.service.AttendanceVerificationTicketService attendanceVerificationTicketService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.core.env.Environment environment;
+
+    @org.springframework.beans.factory.annotation.Value("${security.qr.allow-custom-interval-in-prod:false}")
+    private boolean allowCustomIntervalInProd;
 
     // =========================================================================
     // 1. Xem danh sách phiên điểm danh (Server-side Pagination & Filtering)
@@ -81,7 +98,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         User user = principal.getUser();
 
         if (user.getRole() == Role.STUDENT) {
-            throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền quản lý phiên điểm danh");
+            throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền xem danh sách phiên điểm danh");
         }
 
         final Long effectiveLecturerId = (user.getRole() == Role.LECTURER) ? user.getId() : lecturerId;
@@ -153,6 +170,15 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         // Giảng viên chủ trì phiên
         User sessionLecturer = (user.getRole() == Role.LECTURER) ? user : classSection.getLecturer();
 
+        Integer reqInterval = (request.getQrRotationIntervalSeconds() != null)
+                ? request.getQrRotationIntervalSeconds()
+                : 10;
+        if (reqInterval < 10 || reqInterval > 300) {
+            throw new AppException(ErrorCode.INVALID_REQUEST,
+                    "Thời gian thay đổi mã QR phải từ 10 đến 300 giây (nhận được: " + reqInterval + "s)");
+        }
+        validateQrIntervalEnvironmentPolicy(reqInterval);
+
         boolean openImmediately = Boolean.TRUE.equals(request.getAutoOpen());
         LocalDateTime now = LocalDateTime.now();
 
@@ -160,6 +186,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 .timetableSlot(slot)
                 .lecturer(sessionLecturer)
                 .status(openImmediately ? AttendanceSessionStatus.OPEN : AttendanceSessionStatus.CREATED)
+                .qrRotationIntervalSeconds(reqInterval)
                 .openedAt(openImmediately ? now : null)
                 .createdAt(now)
                 .build();
@@ -169,8 +196,8 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         // Ghi nhật ký kiểm toán (Audit Trail)
         systemLogService.logAudit(
                 "ATTENDANCE_SESSION_CREATED",
-                String.format("Tạo phiên điểm danh #%d cho lớp %s (slot #%d, ngày %s) trạng thái %s",
-                        savedSession.getId(), classSection.getClassName(), slot.getId(), slot.getDate(), savedSession.getStatus()),
+                String.format("Tạo phiên điểm danh #%d cho lớp %s (slot #%d, ngày %s) trạng thái %s (chu kỳ QR: %ds)",
+                        savedSession.getId(), classSection.getClassName(), slot.getId(), slot.getDate(), savedSession.getStatus(), reqInterval),
                 user,
                 null,
                 savedSession.getStatus().name(),
@@ -189,6 +216,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
     public AttendanceSessionResponse openSession(
             UserPrincipal principal,
             Long id,
+            AttendanceSessionOpenRequest openRequest,
             HttpServletRequest httpRequest
     ) {
         validateAuthenticatedUser(principal);
@@ -208,6 +236,20 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                     "Trạng thái phiên không hợp lệ để mở: " + session.getStatus());
         }
 
+        // Determine requested QR rotation interval
+        Integer requestedInterval = (openRequest != null && openRequest.getQrRotationIntervalSeconds() != null)
+                ? openRequest.getQrRotationIntervalSeconds()
+                : (session.getQrRotationIntervalSeconds() != null ? session.getQrRotationIntervalSeconds() : 10);
+
+        // Validate QR rotation interval constraints: 10 <= interval <= 300
+        if (requestedInterval < 10 || requestedInterval > 300) {
+            throw new AppException(ErrorCode.INVALID_REQUEST,
+                    "Thời gian thay đổi mã QR phải từ 10 đến 300 giây (nhận được: " + requestedInterval + "s)");
+        }
+
+        // Environment security check: in production, intervals > 10s require deliberate policy allow-custom-interval-in-prod
+        validateQrIntervalEnvironmentPolicy(requestedInterval);
+
         // Kiểm tra cấu hình điểm danh (attendance_configs)
         AttendanceConfig config = getOrCreateDefaultConfig();
         if (Boolean.FALSE.equals(config.getManualEnabled())) {
@@ -217,9 +259,9 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
         LocalDateTime now = LocalDateTime.now();
 
-        // Atomic Database Update ngăn chặn Race Condition
-        int updated = attendanceSessionRepository.openSessionAtomic(
-                id, now, AttendanceSessionStatus.OPEN, AttendanceSessionStatus.CREATED);
+        // Atomic Database Update ngăn chặn Race Condition và lưu interval
+        int updated = attendanceSessionRepository.openSessionAtomicWithInterval(
+                id, now, AttendanceSessionStatus.OPEN, AttendanceSessionStatus.CREATED, requestedInterval);
 
         if (updated == 0) {
             throw new AppException(ErrorCode.ATTENDANCE_SESSION_INVALID_STATE,
@@ -228,12 +270,13 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
         session.setStatus(AttendanceSessionStatus.OPEN);
         session.setOpenedAt(now);
+        session.setQrRotationIntervalSeconds(requestedInterval);
 
         // Ghi nhật ký kiểm toán
         systemLogService.logAudit(
                 "ATTENDANCE_SESSION_OPENED",
-                String.format("Mở phiên điểm danh #%d cho lớp %s", session.getId(),
-                        session.getTimetableSlot().getClassSection().getClassName()),
+                String.format("Mở phiên điểm danh #%d cho lớp %s (chu kỳ QR: %ds)", session.getId(),
+                        session.getTimetableSlot().getClassSection().getClassName(), requestedInterval),
                 principal.getUser(),
                 "CREATED",
                 "OPEN",
@@ -287,6 +330,9 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
 
         // Vô hiệu hóa và xóa toàn bộ mã QR xoay vòng của phiên
         dynamicQrRedisService.invalidate(session.getId());
+        if (staticTestQrService != null) {
+            staticTestQrService.invalidateSessionStaticQr(session.getId());
+        }
 
         // Ghi nhật ký kiểm toán
         systemLogService.logAudit(
@@ -300,6 +346,50 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         );
 
         return mapToResponse(session);
+    }
+
+    @Override
+    @Transactional
+    public AttendanceSessionResponse updateQrInterval(
+            UserPrincipal principal,
+            Long id,
+            AttendanceSessionOpenRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        validateAuthenticatedUser(principal);
+        AttendanceSession session = findSessionOrThrow(id);
+        validateSessionAccess(principal, session);
+
+        if (session.getStatus() == AttendanceSessionStatus.CLOSED) {
+            throw new AppException(ErrorCode.ATTENDANCE_SESSION_ALREADY_CLOSED,
+                    "Phiên điểm danh đã kết thúc, không thể thay đổi cấu hình QR");
+        }
+
+        Integer newInterval = (request != null && request.getQrRotationIntervalSeconds() != null)
+                ? request.getQrRotationIntervalSeconds()
+                : 10;
+        if (newInterval < 10 || newInterval > 300) {
+            throw new AppException(ErrorCode.INVALID_REQUEST,
+                    "Thời gian thay đổi mã QR phải từ 10 đến 300 giây");
+        }
+        validateQrIntervalEnvironmentPolicy(newInterval);
+
+        session.setQrRotationIntervalSeconds(newInterval);
+        AttendanceSession saved = attendanceSessionRepository.save(session);
+
+        // Invalidate current cached QR so the new interval takes effect immediately
+        dynamicQrRedisService.invalidate(session.getId());
+
+        systemLogService.logAudit(
+                "ATTENDANCE_SESSION_QR_INTERVAL_UPDATED",
+                String.format("Cập nhật chu kỳ thay đổi mã QR cho phiên #%d thành %ds", session.getId(), newInterval),
+                principal.getUser(),
+                null,
+                String.valueOf(newInterval),
+                httpRequest
+        );
+
+        return mapToResponse(saved);
     }
 
     // =========================================================================
@@ -508,7 +598,20 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
             return;
         }
 
-        throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền quản lý phiên điểm danh");
+        if (user.getRole() == Role.STUDENT) {
+            ClassSection cs = session.getTimetableSlot() != null ? session.getTimetableSlot().getClassSection() : null;
+            if (cs != null) {
+                boolean isEnrolled = enrollmentRepository.findByClassSection_ClassNameAndStudent_Id(cs.getClassName(), user.getId())
+                        .map(e -> e.getStatus() == EnrollmentStatus.ENROLLED)
+                        .orElse(false);
+                if (isEnrolled) {
+                    return;
+                }
+            }
+            throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không được ghi danh vào lớp học phần này");
+        }
+
+        throw new AppException(ErrorCode.FORBIDDEN, "Người dùng không có quyền truy cập phiên điểm danh");
     }
 
     private void validateLecturerAssignment(Long lecturerId, ClassSection classSection) {
@@ -590,6 +693,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 .startTime(startTime)
                 .endTime(endTime)
                 .status(session.getStatus())
+                .qrRotationIntervalSeconds(session.getQrRotationIntervalSeconds() != null ? session.getQrRotationIntervalSeconds() : 10)
                 .openedAt(session.getOpenedAt())
                 .closedAt(session.getClosedAt())
                 .createdAt(session.getCreatedAt())
@@ -600,6 +704,25 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 .canOpen(session.getStatus() == AttendanceSessionStatus.CREATED)
                 .canClose(session.getStatus() == AttendanceSessionStatus.OPEN)
                 .build();
+    }
+
+    private void validateQrIntervalEnvironmentPolicy(int interval) {
+        if (interval == 10) {
+            return;
+        }
+        if (environment == null) {
+            return;
+        }
+        String[] activeProfiles = environment.getActiveProfiles();
+        if (activeProfiles == null || activeProfiles.length == 0) {
+            activeProfiles = environment.getDefaultProfiles();
+        }
+        boolean isProd = java.util.Arrays.stream(activeProfiles)
+                .anyMatch(p -> "prod".equalsIgnoreCase(p) || "production".equalsIgnoreCase(p));
+        if (isProd && !allowCustomIntervalInProd) {
+            throw new AppException(ErrorCode.INVALID_REQUEST,
+                    "Trong môi trường Production, thời gian thay đổi mã QR được cố định mặc định 10 giây theo chính sách bảo mật.");
+        }
     }
 
     private AttendanceConfig getOrCreateDefaultConfig() {
@@ -722,10 +845,76 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
             throw new AppException(ErrorCode.INVALID_REQUEST, "Cần cung cấp sessionId hoặc slotId để xác định phiên điểm danh");
         }
 
+        // 3.1. Kiểm tra yêu cầu điểm danh lại (Recheck Request) nếu có
+        AttendanceRecheckRequest recheckRequest = null;
+        if (request.getRecheckRequestId() != null) {
+            recheckRequest = attendanceRecheckRequestRepository.findById(request.getRecheckRequestId())
+                    .orElseThrow(() -> new AppException(ErrorCode.RECHECK_REQUEST_NOT_FOUND,
+                            "Không tìm thấy yêu cầu điểm danh lại với ID: " + request.getRecheckRequestId()));
+
+            if (!recheckRequest.getStudent().getId().equals(student.getId())) {
+                throw new AppException(ErrorCode.FORBIDDEN, "Yêu cầu điểm danh lại không thuộc về sinh viên hiện tại");
+            }
+
+            if (!recheckRequest.getSession().getId().equals(session.getId())) {
+                throw new AppException(ErrorCode.INVALID_REQUEST, "Yêu cầu điểm danh lại không thuộc về phiên học này");
+            }
+
+            if ("COMPLETED".equalsIgnoreCase(recheckRequest.getStatus())) {
+                throw new AppException(ErrorCode.RECHECK_REQUEST_ALREADY_COMPLETED, "Yêu cầu điểm danh lại này đã được hoàn tất");
+            }
+
+            if (!"PENDING".equalsIgnoreCase(recheckRequest.getStatus())) {
+                throw new AppException(ErrorCode.INVALID_REQUEST,
+                        "Yêu cầu điểm danh lại không ở trạng thái chờ thực hiện (" + recheckRequest.getStatus() + ")");
+            }
+
+            if (recheckRequest.getExpiresAt() != null && LocalDateTime.now().isAfter(recheckRequest.getExpiresAt())) {
+                recheckRequest.setStatus("EXPIRED");
+                attendanceRecheckRequestRepository.save(recheckRequest);
+                throw new AppException(ErrorCode.RECHECK_REQUEST_EXPIRED,
+                        "Yêu cầu điểm danh lại đã hết hạn lúc " + recheckRequest.getExpiresAt());
+            }
+        }
+
         // 4. Kiểm tra trạng thái phiên điểm danh phải là OPEN
         if (session.getStatus() != AttendanceSessionStatus.OPEN) {
             throw new AppException(ErrorCode.ATTENDANCE_SESSION_CLOSED,
                     "Ca điểm danh hiện không ở trạng thái mở tiếp nhận");
+        }
+
+        // 4.1. Xác thực thông tin cấp quyền điểm danh (Verification Ticket, hoặc Fallback QR Token / OTP Code)
+        String ticketId = request.getVerificationTicket();
+        String verifiedMethod = null;
+        if (ticketId != null && !ticketId.trim().isEmpty()) {
+            com.unicheck.model.dto.VerificationTicket ticket = attendanceVerificationTicketService.validateTicket(
+                    ticketId.trim(),
+                    student.getId(),
+                    session.getId()
+            ).orElseThrow(() -> new AppException(ErrorCode.QR_TOKEN_EXPIRED,
+                    "Phiếu xác thực điểm danh (Verification Ticket) không hợp lệ hoặc đã hết hạn (> 180s). Vui lòng quét lại QR hoặc nhập lại OTP."));
+            verifiedMethod = ticket.verificationMethod();
+            log.info("Xác thực điểm danh bằng Verification Ticket thành công: ticketId={}, studentId={}, sessionId={}, method={}",
+                    ticket.ticketId(), student.getId(), session.getId(), verifiedMethod);
+        } else if (request.getQrToken() != null && !request.getQrToken().trim().isEmpty()) {
+            String token = request.getQrToken().trim();
+            com.unicheck.model.dto.QrValidationRequest qrReq = com.unicheck.model.dto.QrValidationRequest.builder()
+                    .qrToken(token)
+                    .sessionId(session.getId())
+                    .build();
+            if (staticTestQrService != null && staticTestQrService.isStaticToken(token)) {
+                staticTestQrService.validateStaticQrToken(qrReq, principal);
+            } else if (dynamicQrService != null) {
+                dynamicQrService.validateQrToken(qrReq, principal);
+            }
+            verifiedMethod = "QR";
+        } else if (request.getOtpCode() != null && !request.getOtpCode().trim().isEmpty()) {
+            com.unicheck.model.dto.OtpValidationRequest otpReq = com.unicheck.model.dto.OtpValidationRequest.builder()
+                    .otpCode(request.getOtpCode().trim())
+                    .sessionId(session.getId())
+                    .build();
+            dynamicQrService.validateOtp(otpReq, principal);
+            verifiedMethod = "OTP";
         }
 
         TimetableSlot slot = session.getTimetableSlot();
@@ -735,6 +924,30 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         ClassSection classSection = slot.getClassSection();
         Course course = classSection.getCourse();
         Room room = slot.getRoom();
+
+        // 4.2. Kiểm tra thời gian ca học: Ca học phải đúng ngày và chưa kết thúc
+        LocalDate slotDate = slot.getDate();
+        LocalTime slotEndTime = slot.getEndTime();
+        if (slotEndTime == null && slot.getSlotType() != null) {
+            slotEndTime = slot.getSlotType().getEndTime();
+        }
+        LocalDate today = LocalDate.now();
+        LocalTime currentTime = LocalTime.now();
+
+        if (slotDate != null) {
+            if (slotDate.isBefore(today)) {
+                throw new AppException(ErrorCode.ATTENDANCE_SESSION_CLOSED,
+                        "Ca học đã kết thúc vào ngày " + slotDate + ". Không thể điểm danh.");
+            } else if (slotDate.isAfter(today)) {
+                throw new AppException(ErrorCode.ATTENDANCE_SESSION_CLOSED,
+                        "Ca học chưa diễn ra (Ngày học: " + slotDate + "). Không thể điểm danh.");
+            }
+        }
+
+        if (slotEndTime != null && currentTime.isAfter(slotEndTime)) {
+            throw new AppException(ErrorCode.ATTENDANCE_SESSION_CLOSED,
+                    "Ca học đã kết thúc lúc " + slotEndTime + ". Không thể điểm danh.");
+        }
 
         // 5. Kiểm tra ghi danh của sinh viên vào lớp học phần
         if (student.getRole() == Role.STUDENT) {
@@ -749,7 +962,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         // 6. Kiểm tra chống điểm danh trùng lặp (Idempotency)
         Optional<StudentAttendance> existingRecordOpt =
                 studentAttendanceRepository.findBySessionIdAndStudentId(session.getId(), student.getId());
-        if (existingRecordOpt.isPresent()) {
+        if (existingRecordOpt.isPresent() && recheckRequest == null) {
             StudentAttendance existing = existingRecordOpt.get();
             if ("PRESENT".equalsIgnoreCase(existing.getStatus()) || "LATE".equalsIgnoreCase(existing.getStatus())) {
                 throw new AppException(ErrorCode.ALREADY_CHECKED_IN,
@@ -771,9 +984,12 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         );
 
         int currentAttempts = (attendanceRecord.getAttemptCount() != null ? attendanceRecord.getAttemptCount() : 0) + 1;
+        if (recheckRequest != null) {
+            currentAttempts = 1;
+        }
         attendanceRecord.setAttemptCount(currentAttempts);
 
-        if (currentAttempts > maxAttempts) {
+        if (recheckRequest == null && currentAttempts > maxAttempts) {
             attendanceRecord.setRequiresManualVerify(true);
             attendanceRecord.setFailureReason("Vượt quá số lần thử điểm danh (" + currentAttempts + "/" + maxAttempts + ")");
             studentAttendanceRepository.save(attendanceRecord);
@@ -782,17 +998,34 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         }
 
         // 8. Đối soát vị trí Wi-Fi (Nếu được cấu hình và phòng học có đăng ký Access Point)
+        boolean isSimulationAllowed = wifiSimulationService != null && wifiSimulationService.isWifiSimulationAllowedForSession(session);
+        boolean isSimulatedCheckIn = false;
+
         if (Boolean.TRUE.equals(config.getWifiLocationEnabled()) && room != null) {
             List<RoomWifiAccessPoint> roomAps = roomWifiAccessPointRepository.findByRoomId(room.getId());
             if (roomAps != null && !roomAps.isEmpty()) {
                 String studentBssid = request.getWifiBssid();
+                String studentSsid = request.getWifiSsid();
                 boolean wifiMatched = studentBssid != null && roomAps.stream().anyMatch(rap ->
                         rap.getWifiAccessPoint() != null &&
                         rap.getWifiAccessPoint().getStatus() == WifiApStatus.ACTIVE &&
                         rap.getWifiAccessPoint().getBssid() != null &&
                         rap.getWifiAccessPoint().getBssid().equalsIgnoreCase(studentBssid.trim())
                 );
+
+                // Đối soát chế độ Wi-Fi mô phỏng DEMO_WIFI_SIMULATION khi không khớp AP vật lý
+                if (!wifiMatched && isSimulationAllowed) {
+                    if (wifiSimulationService.isSimulatedWifiMatchForSession(session, studentBssid, studentSsid)) {
+                        wifiMatched = true;
+                        isSimulatedCheckIn = true;
+                        log.info("DEMO_WIFI_SIMULATION: Đối soát Wi-Fi mô phỏng thành công cho sinh viên {} ({}) lớp {} phòng {}",
+                                student.getCode(), student.getId(), classSection.getClassName(), room.getCode());
+                    }
+                }
+
                 if (!wifiMatched) {
+                    recordAttempt(recheckRequest, student, true, false, false, false, "FAILED", "ERR_3008",
+                            "Vị trí Wi-Fi không khớp với phòng học " + (room.getName() != null ? room.getName() : room.getCode()));
                     attendanceRecord.setFailureReason("Vị trí Wi-Fi không khớp với phòng học " + (room.getName() != null ? room.getName() : room.getCode()));
                     attendanceRecord.setWifiBssid(studentBssid);
                     studentAttendanceRepository.save(attendanceRecord);
@@ -826,13 +1059,20 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         try {
             livenessResponse = aiServiceClient.checkLiveness(imageBase64, livenessThreshold);
         } catch (AppException e) {
+            String errCodeStr = e.getErrorCode() != null ? e.getErrorCode().getCode() : "ERR_AI";
+            recordAttempt(recheckRequest, student, true, true, false, false, "FAILED", errCodeStr, e.getMessage());
             attendanceRecord.setFailureReason("Liveness check failed: " + e.getMessage());
             studentAttendanceRepository.save(attendanceRecord);
             throw e;
         }
 
+        log.info("[FaceCheckin] StudentId={}, SessionId={}, LivenessScore={}, LivenessThreshold={}, IsLive={}",
+                student.getId(), session.getId(), livenessResponse.getLivenessScore(), livenessThreshold, livenessResponse.isLive());
+
         if (livenessResponse == null || !livenessResponse.isLive()
                 || (livenessResponse.getLivenessScore() != null && livenessResponse.getLivenessScore() < livenessThreshold)) {
+            recordAttempt(recheckRequest, student, true, true, false, false, "FAILED", ErrorCode.FACE_LIVENESS_FAILED.getCode(),
+                    "Kiểm tra thực thể (liveness) thất bại: phát hiện giả mạo khuôn mặt");
             attendanceRecord.setFailureReason("Kiểm tra thực thể (liveness) thất bại: phát hiện giả mạo khuôn mặt");
             studentAttendanceRepository.save(attendanceRecord);
             throw new AppException(ErrorCode.FACE_LIVENESS_FAILED,
@@ -846,14 +1086,21 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         try {
             verifyResponse = aiServiceClient.verifyFace(registeredEmbedding, imageBase64, verifyThreshold);
         } catch (AppException e) {
+            String errCodeStr = e.getErrorCode() != null ? e.getErrorCode().getCode() : "ERR_AI";
+            recordAttempt(recheckRequest, student, true, true, false, true, "FAILED", errCodeStr, e.getMessage());
             attendanceRecord.setFailureReason("Face verification failed: " + e.getMessage());
             studentAttendanceRepository.save(attendanceRecord);
             throw e;
         }
 
+        log.info("[FaceCheckin] StudentId={}, SessionId={}, Similarity={}, VerifyThreshold={}, IsMatched={}",
+                student.getId(), session.getId(), verifyResponse.getSimilarity(), verifyThreshold, verifyResponse.isMatched());
+
         if (verifyResponse == null || !verifyResponse.isMatched()
                 || (verifyResponse.getSimilarity() != null && verifyResponse.getSimilarity() < verifyThreshold)) {
             double sim = verifyResponse != null && verifyResponse.getSimilarity() != null ? verifyResponse.getSimilarity() : 0.0;
+            recordAttempt(recheckRequest, student, true, true, false, true, "FAILED", ErrorCode.FACE_NOT_MATCHED.getCode(),
+                    String.format("Khuôn mặt không khớp với hồ sơ đã đăng ký (Độ tương đồng: %.2f)", sim));
             attendanceRecord.setFailureReason(String.format("Khuôn mặt không khớp với hồ sơ đã đăng ký (Độ tương đồng: %.2f)", sim));
             studentAttendanceRepository.save(attendanceRecord);
             throw new AppException(ErrorCode.FACE_NOT_MATCHED,
@@ -873,27 +1120,68 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
         }
 
         // 13. Cập nhật và lưu bản ghi StudentAttendance vào PostgreSQL
+        String previousStatus = existingRecordOpt.map(StudentAttendance::getStatus).orElse("ABSENT");
         attendanceRecord.setStatus(finalStatus);
-        attendanceRecord.setMethod("FACE_QR");
+        String checkinMethod = "FACE_QR";
+        if ("OTP".equalsIgnoreCase(request.getVerificationMethod())
+                || "OTP".equalsIgnoreCase(verifiedMethod)
+                || (request.getOtpCode() != null && !request.getOtpCode().isBlank())) {
+            checkinMethod = "FACE_OTP";
+        }
+        attendanceRecord.setMethod(checkinMethod);
         attendanceRecord.setCheckInTime(now);
         attendanceRecord.setFaceConfidence(verifyResponse.getSimilarity() != null ? (double) verifyResponse.getSimilarity() : 0.985);
         attendanceRecord.setWifiBssid(request.getWifiBssid());
         String deviceNote = request.getDeviceModel() != null ? " (" + request.getDeviceModel() + ")" : "";
-        attendanceRecord.setNote("Điểm danh qua Mobile Face-ID" + deviceNote);
+        if (recheckRequest != null) {
+            attendanceRecord.setNote("Điểm danh lại thành công qua Face-ID & " + ("FACE_OTP".equals(checkinMethod) ? "OTP" : "QR") + (isSimulatedCheckIn ? " (Wi-Fi mô phỏng Demo)" : "") + deviceNote);
+        } else if (isSimulatedCheckIn) {
+            attendanceRecord.setNote("Điểm danh qua Mobile Face-ID & " + ("FACE_OTP".equals(checkinMethod) ? "OTP" : "QR") + " (Wi-Fi mô phỏng Demo)" + deviceNote);
+        } else {
+            attendanceRecord.setNote("Điểm danh qua Mobile Face-ID & " + ("FACE_OTP".equals(checkinMethod) ? "OTP" : "QR") + deviceNote);
+        }
         attendanceRecord.setFailureReason(null);
         attendanceRecord.setRequiresManualVerify(false);
         attendanceRecord.setUpdatedAt(now);
 
         StudentAttendance savedAttendance = studentAttendanceRepository.save(attendanceRecord);
 
+        // 13.1. Tiêu thụ Verification Ticket sau khi điểm danh thành công
+        if (ticketId != null && !ticketId.trim().isEmpty()) {
+            attendanceVerificationTicketService.consumeTicket(ticketId.trim());
+        }
+
+        // Nếu đây là lượt điểm danh lại theo yêu cầu của giảng viên
+        if (recheckRequest != null) {
+            recordAttempt(recheckRequest, student, true, true, true, true, "SUCCESS", null, null);
+            recheckRequest.setStatus("COMPLETED");
+            recheckRequest.setCompletedAt(now);
+            attendanceRecheckRequestRepository.save(recheckRequest);
+
+            AttendanceAdjustmentHistory adjHistory = AttendanceAdjustmentHistory.builder()
+                    .session(session)
+                    .student(student)
+                    .oldStatus(previousStatus)
+                    .newStatus(finalStatus)
+                    .reason("Sinh viên hoàn tất điểm danh lại (Re-check-in thành công): " + recheckRequest.getReason())
+                    .modifiedBy(student)
+                    .modifiedAt(now)
+                    .modificationType("RECHECK_COMPLETED")
+                    .build();
+            attendanceAdjustmentHistoryRepository.save(adjHistory);
+        }
+
         // 14. Ghi nhật ký kiểm toán (Audit Trail)
+        String auditSimSuffix = isSimulatedCheckIn ? " [Wi-Fi mô phỏng Demo]" : "";
         systemLogService.logAudit(
-                "STUDENT_CHECK_IN",
-                String.format("Sinh viên %s (%s) điểm danh thành công lớp %s (slot #%d) - Trạng thái: %s",
-                        student.getFullName(), student.getCode(), classSection.getClassName(),
-                        slot.getSlotNumber(), finalStatus),
+                recheckRequest != null ? "STUDENT_RECHECK_IN" : "STUDENT_CHECK_IN",
+                String.format("Sinh viên %s (%s) %s lớp %s (slot #%d) - Trạng thái: %s%s",
+                        student.getFullName(), student.getCode(),
+                        recheckRequest != null ? "hoàn tất điểm danh lại" : "điểm danh thành công",
+                        classSection.getClassName(),
+                        slot.getSlotNumber(), finalStatus, auditSimSuffix),
                 student,
-                "ABSENT",
+                previousStatus,
                 finalStatus,
                 httpRequest
         );
@@ -909,6 +1197,12 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 ? (room.getCode() != null ? room.getCode() : (room.getName() != null ? room.getName() : "N/A"))
                 : "N/A";
 
+        String successMessage = (recheckRequest != null ? "Điểm danh lại thành công" : "Điểm danh thành công")
+                + ("LATE".equals(finalStatus) ? " (Đi muộn)" : "");
+        if (isSimulatedCheckIn) {
+            successMessage += " (Wi-Fi mô phỏng Demo)";
+        }
+
         return StudentAttendanceResponse.builder()
                 .id(savedAttendance.getId())
                 .sessionId(session.getId())
@@ -916,7 +1210,7 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 .studentCode(student.getCode())
                 .studentName(student.getFullName())
                 .status(finalStatus)
-                .method("FACE_QR")
+                .method(savedAttendance.getMethod() != null ? savedAttendance.getMethod() : checkinMethod)
                 .checkInTime(savedAttendance.getCheckInTime())
                 .faceConfidence(savedAttendance.getFaceConfidence())
                 .note(savedAttendance.getNote())
@@ -925,7 +1219,434 @@ public class AttendanceSessionServiceImpl implements AttendanceSessionService {
                 .courseName(course != null ? course.getName() : "")
                 .className(classSection.getClassName())
                 .roomCode(roomIdentifier)
-                .message("Điểm danh thành công" + ("LATE".equals(finalStatus) ? " (Đi muộn)" : ""))
+                .message(successMessage)
+                .build();
+    }
+
+    private void recordAttempt(
+            AttendanceRecheckRequest req,
+            User student,
+            boolean qr,
+            boolean wifi,
+            boolean face,
+            boolean liveness,
+            String status,
+            String errCode,
+            String reason
+    ) {
+        if (req == null) return;
+        attendanceVerificationAttemptService.recordAttempt(req, student, qr, wifi, face, liveness, status, errCode, reason);
+    }
+
+    // =========================================================================
+    // 12. Quản lý danh sách sinh viên & Trạng thái điểm danh phiên
+    // =========================================================================
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SessionStudentAttendanceDto> getSessionStudents(UserPrincipal principal, Long sessionId) {
+        validateAuthenticatedUser(principal);
+        AttendanceSession session = attendanceSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new AppException(ErrorCode.ATTENDANCE_SESSION_NOT_FOUND,
+                        "Không tìm thấy phiên điểm danh ID: " + sessionId));
+
+        validateSessionAccess(principal, session);
+
+        TimetableSlot slot = session.getTimetableSlot();
+        if (slot == null || slot.getClassSection() == null) {
+            return Collections.emptyList();
+        }
+
+        ClassSection cs = slot.getClassSection();
+        List<Enrollment> enrollments = enrollmentRepository.findByClassSection_ClassName(cs.getClassName());
+        List<StudentAttendance> attendances = studentAttendanceRepository.findBySessionId(sessionId);
+        List<AttendanceRecheckRequest> recheckRequests = attendanceRecheckRequestRepository.findBySessionIdWithDetails(sessionId);
+
+        Map<Long, StudentAttendance> attendanceMap = new HashMap<>();
+        for (StudentAttendance sa : attendances) {
+            if (sa.getStudent() != null) {
+                attendanceMap.put(sa.getStudent().getId(), sa);
+            }
+        }
+
+        Map<Long, AttendanceRecheckRequest> latestRecheckMap = new HashMap<>();
+        for (AttendanceRecheckRequest rr : recheckRequests) {
+            if (rr.getStudent() != null) {
+                latestRecheckMap.putIfAbsent(rr.getStudent().getId(), rr);
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        List<SessionStudentAttendanceDto> result = new ArrayList<>();
+
+        for (Enrollment enrollment : enrollments) {
+            if (enrollment.getStatus() != EnrollmentStatus.ENROLLED) {
+                continue;
+            }
+            User student = enrollment.getStudent();
+            if (student == null) continue;
+
+            StudentAttendance sa = attendanceMap.get(student.getId());
+            AttendanceRecheckRequest rr = latestRecheckMap.get(student.getId());
+
+            String status = (sa != null && sa.getStatus() != null) ? sa.getStatus() : "ABSENT";
+            String recheckStatus = "NONE";
+            Long recheckRequestId = null;
+            String recheckReason = null;
+            LocalDateTime recheckExpiresAt = null;
+
+            if (rr != null) {
+                recheckStatus = rr.getStatus();
+                recheckRequestId = rr.getId();
+                recheckReason = rr.getReason();
+                recheckExpiresAt = rr.getExpiresAt();
+
+                if ("PENDING".equalsIgnoreCase(recheckStatus) && recheckExpiresAt != null && now.isAfter(recheckExpiresAt)) {
+                    recheckStatus = "EXPIRED";
+                }
+            }
+
+            result.add(SessionStudentAttendanceDto.builder()
+                    .studentId(student.getId())
+                    .studentCode(student.getCode())
+                    .fullName(student.getFullName())
+                    .email(student.getEmail())
+                    .attendanceId(sa != null ? sa.getId() : null)
+                    .status(status)
+                    .checkInTime(sa != null ? sa.getCheckInTime() : null)
+                    .method(sa != null ? sa.getMethod() : null)
+                    .faceConfidence(sa != null ? sa.getFaceConfidence() : null)
+                    .note(sa != null ? sa.getNote() : null)
+                    .recheckStatus(recheckStatus)
+                    .recheckRequestId(recheckRequestId)
+                    .recheckReason(recheckReason)
+                    .recheckExpiresAt(recheckExpiresAt)
+                    .build());
+        }
+
+        result.sort((a, b) -> {
+            String c1 = a.getStudentCode() != null ? a.getStudentCode() : "";
+            String c2 = b.getStudentCode() != null ? b.getStudentCode() : "";
+            return c1.compareToIgnoreCase(c2);
+        });
+
+        return result;
+    }
+
+    // =========================================================================
+    // 13. Điều chỉnh thủ công trạng thái điểm danh của sinh viên
+    // =========================================================================
+
+    @Override
+    @Transactional
+    public StudentAttendanceResponse adjustStudentAttendance(
+            UserPrincipal principal,
+            Long sessionId,
+            Long studentId,
+            AttendanceManualAdjustRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        validateAuthenticatedUser(principal);
+        User operator = principal.getUser();
+        if (operator.getRole() == Role.STUDENT) {
+            throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền điều chỉnh điểm danh");
+        }
+
+        AttendanceSession session = attendanceSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new AppException(ErrorCode.ATTENDANCE_SESSION_NOT_FOUND,
+                        "Không tìm thấy phiên điểm danh ID: " + sessionId));
+
+        validateSessionAccess(principal, session);
+
+        User student = userRepository.findById(studentId)
+                .orElseThrow(() -> new AppException(ErrorCode.STUDENT_NOT_FOUND,
+                        "Không tìm thấy sinh viên ID: " + studentId));
+
+        TimetableSlot slot = session.getTimetableSlot();
+        ClassSection cs = slot.getClassSection();
+        boolean isEnrolled = enrollmentRepository.existsByClassSection_ClassNameAndStudent_Id(
+                cs.getClassName(), studentId);
+        if (!isEnrolled) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Sinh viên " + student.getCode() + " không ghi danh vào lớp học phần " + cs.getClassName());
+        }
+
+        Optional<StudentAttendance> existingRecordOpt =
+                studentAttendanceRepository.findBySessionIdAndStudentId(sessionId, studentId);
+        String oldStatus = existingRecordOpt.map(StudentAttendance::getStatus).orElse("ABSENT");
+
+        StudentAttendance attendanceRecord = existingRecordOpt.orElseGet(() ->
+                StudentAttendance.builder()
+                        .session(session)
+                        .student(student)
+                        .attemptCount(0)
+                        .build()
+        );
+
+        LocalDateTime now = LocalDateTime.now();
+        String newStatus = request.getNewStatus().trim().toUpperCase();
+        attendanceRecord.setStatus(newStatus);
+        attendanceRecord.setMethod("MANUAL");
+        if (attendanceRecord.getCheckInTime() == null && ("PRESENT".equals(newStatus) || "LATE".equals(newStatus))) {
+            attendanceRecord.setCheckInTime(now);
+        }
+        attendanceRecord.setNote("Giảng viên điều chỉnh thủ công: " + request.getReason().trim());
+        attendanceRecord.setRequiresManualVerify(false);
+        attendanceRecord.setFailureReason(null);
+        attendanceRecord.setUpdatedAt(now);
+
+        StudentAttendance savedAttendance = studentAttendanceRepository.save(attendanceRecord);
+
+        // Lưu lịch sử điều chỉnh
+        AttendanceAdjustmentHistory history = AttendanceAdjustmentHistory.builder()
+                .session(session)
+                .student(student)
+                .oldStatus(oldStatus)
+                .newStatus(newStatus)
+                .reason(request.getReason().trim())
+                .modifiedBy(operator)
+                .modifiedAt(now)
+                .modificationType("MANUAL_ADJUSTMENT")
+                .build();
+        attendanceAdjustmentHistoryRepository.save(history);
+
+        // Ghi Audit Log
+        systemLogService.logAudit(
+                "ATTENDANCE_MANUAL_ADJUST",
+                String.format("Giảng viên %s điều chỉnh điểm danh sinh viên %s (%s) từ %s sang %s. Lý do: %s",
+                        operator.getFullName(), student.getFullName(), student.getCode(),
+                        oldStatus, newStatus, request.getReason().trim()),
+                operator,
+                oldStatus,
+                newStatus,
+                httpRequest
+        );
+
+        Course course = cs.getCourse();
+        Room room = slot.getRoom();
+        String dateStr = slot.getDate() != null
+                ? slot.getDate().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"))
+                : now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String courseCode = course != null ? course.getCode() : "CLS";
+        String receiptId = String.format("#ATT-%s-%s-%d", dateStr, courseCode, savedAttendance.getId());
+        String roomIdentifier = room != null ? (room.getCode() != null ? room.getCode() : "N/A") : "N/A";
+
+        return StudentAttendanceResponse.builder()
+                .id(savedAttendance.getId())
+                .sessionId(session.getId())
+                .studentId(student.getId())
+                .studentCode(student.getCode())
+                .studentName(student.getFullName())
+                .status(newStatus)
+                .method("MANUAL")
+                .checkInTime(savedAttendance.getCheckInTime())
+                .faceConfidence(savedAttendance.getFaceConfidence())
+                .note(savedAttendance.getNote())
+                .receiptId(receiptId)
+                .courseCode(course != null ? course.getCode() : "")
+                .courseName(course != null ? course.getName() : "")
+                .className(cs.getClassName())
+                .roomCode(roomIdentifier)
+                .message("Điều chỉnh điểm danh thành công sang " + newStatus)
+                .build();
+    }
+
+    // =========================================================================
+    // 14. Giảng viên gửi yêu cầu sinh viên điểm danh lại (Recheck Request)
+    // =========================================================================
+
+    @Override
+    @Transactional
+    public AttendanceRecheckResponse createRecheckRequest(
+            UserPrincipal principal,
+            Long sessionId,
+            Long studentId,
+            AttendanceRecheckCreateRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        validateAuthenticatedUser(principal);
+        User lecturer = principal.getUser();
+        if (lecturer.getRole() == Role.STUDENT) {
+            throw new AppException(ErrorCode.FORBIDDEN, "Sinh viên không có quyền yêu cầu điểm danh lại");
+        }
+
+        AttendanceSession session = attendanceSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new AppException(ErrorCode.ATTENDANCE_SESSION_NOT_FOUND,
+                        "Không tìm thấy phiên điểm danh ID: " + sessionId));
+
+        validateSessionAccess(principal, session);
+
+        User student = userRepository.findById(studentId)
+                .orElseThrow(() -> new AppException(ErrorCode.STUDENT_NOT_FOUND,
+                        "Không tìm thấy sinh viên ID: " + studentId));
+
+        TimetableSlot slot = session.getTimetableSlot();
+        ClassSection cs = slot.getClassSection();
+        boolean isEnrolled = enrollmentRepository.existsByClassSection_ClassNameAndStudent_Id(
+                cs.getClassName(), studentId);
+        if (!isEnrolled) {
+            throw new AppException(ErrorCode.FORBIDDEN,
+                    "Sinh viên " + student.getCode() + " không thuộc lớp " + cs.getClassName());
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // Kiểm tra xem đã có yêu cầu PENDING còn hạn hay không
+        Optional<AttendanceRecheckRequest> activeOpt =
+                attendanceRecheckRequestRepository.findFirstBySessionIdAndStudentIdAndStatus(sessionId, studentId, "PENDING");
+        if (activeOpt.isPresent()) {
+            AttendanceRecheckRequest existing = activeOpt.get();
+            if (existing.getExpiresAt() != null && existing.getExpiresAt().isAfter(now)) {
+                throw new AppException(ErrorCode.DUPLICATE_PENDING_RECHECK,
+                        "Sinh viên " + student.getFullName() + " (" + student.getCode() + ") đang có yêu cầu điểm danh lại chưa hết hạn");
+            } else {
+                existing.setStatus("EXPIRED");
+                attendanceRecheckRequestRepository.save(existing);
+            }
+        }
+
+        int expiryMins = (request.getExpirationMinutes() != null && request.getExpirationMinutes() > 0)
+                ? request.getExpirationMinutes() : 15;
+        LocalDateTime expiresAt = now.plusMinutes(expiryMins);
+
+        AttendanceRecheckRequest newRequest = AttendanceRecheckRequest.builder()
+                .session(session)
+                .student(student)
+                .requestedBy(lecturer)
+                .reason(request.getReason().trim())
+                .status("PENDING")
+                .requestedAt(now)
+                .expiresAt(expiresAt)
+                .build();
+        AttendanceRecheckRequest saved = attendanceRecheckRequestRepository.save(newRequest);
+
+        String currentStatus = studentAttendanceRepository.findBySessionIdAndStudentId(sessionId, studentId)
+                .map(StudentAttendance::getStatus).orElse("ABSENT");
+
+        AttendanceAdjustmentHistory history = AttendanceAdjustmentHistory.builder()
+                .session(session)
+                .student(student)
+                .oldStatus(currentStatus)
+                .newStatus(currentStatus)
+                .reason("Giảng viên yêu cầu điểm danh lại: " + request.getReason().trim() + " (Thời hạn: " + expiryMins + " phút)")
+                .modifiedBy(lecturer)
+                .modifiedAt(now)
+                .modificationType("RECHECK_REQUESTED")
+                .build();
+        attendanceAdjustmentHistoryRepository.save(history);
+
+        systemLogService.logAudit(
+                "ATTENDANCE_RECHECK_REQUESTED",
+                String.format("Giảng viên %s yêu cầu sinh viên %s (%s) điểm danh lại lớp %s. Lý do: %s",
+                        lecturer.getFullName(), student.getFullName(), student.getCode(),
+                        cs.getClassName(), request.getReason().trim()),
+                lecturer,
+                currentStatus,
+                "RECHECK_PENDING",
+                httpRequest
+        );
+
+        return mapToRecheckResponse(saved);
+    }
+
+    // =========================================================================
+    // 15. Lịch sử điều chỉnh điểm danh và tái xác thực của phiên
+    // =========================================================================
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AttendanceHistoryRecordDto> getSessionAdjustmentHistory(UserPrincipal principal, Long sessionId) {
+        validateAuthenticatedUser(principal);
+        AttendanceSession session = attendanceSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new AppException(ErrorCode.ATTENDANCE_SESSION_NOT_FOUND,
+                        "Không tìm thấy phiên điểm danh ID: " + sessionId));
+
+        validateSessionAccess(principal, session);
+
+        List<AttendanceAdjustmentHistory> list = attendanceAdjustmentHistoryRepository.findBySessionIdWithDetails(sessionId);
+        return list.stream().map(h -> AttendanceHistoryRecordDto.builder()
+                .id(h.getId())
+                .sessionId(h.getSession().getId())
+                .studentId(h.getStudent().getId())
+                .studentCode(h.getStudent().getCode())
+                .studentName(h.getStudent().getFullName())
+                .oldStatus(h.getOldStatus())
+                .newStatus(h.getNewStatus())
+                .reason(h.getReason())
+                .modifiedByName(h.getModifiedBy() != null ? h.getModifiedBy().getFullName() : "Hệ thống")
+                .modifiedAt(h.getModifiedAt())
+                .modificationType(h.getModificationType())
+                .build()
+        ).collect(Collectors.toList());
+    }
+
+    // =========================================================================
+    // 16. Sinh viên lấy danh sách yêu cầu điểm danh lại đang chờ (PENDING)
+    // =========================================================================
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AttendanceRecheckResponse> getPendingRecheckRequestsForStudent(UserPrincipal principal) {
+        validateAuthenticatedUser(principal);
+        User student = principal.getUser();
+        LocalDateTime now = LocalDateTime.now();
+
+        List<AttendanceRecheckRequest> activeRequests =
+                attendanceRecheckRequestRepository.findActivePendingRequestsForStudent(student.getId(), now);
+
+        return activeRequests.stream().map(this::mapToRecheckResponse).collect(Collectors.toList());
+    }
+
+    // =========================================================================
+    // 17. Chi tiết một yêu cầu điểm danh lại
+    // =========================================================================
+
+    @Override
+    @Transactional(readOnly = true)
+    public AttendanceRecheckResponse getRecheckRequestDetails(UserPrincipal principal, Long requestId) {
+        validateAuthenticatedUser(principal);
+        AttendanceRecheckRequest req = attendanceRecheckRequestRepository.findById(requestId)
+                .orElseThrow(() -> new AppException(ErrorCode.RECHECK_REQUEST_NOT_FOUND,
+                        "Không tìm thấy yêu cầu điểm danh lại ID: " + requestId));
+
+        User user = principal.getUser();
+        if (user.getRole() == Role.STUDENT && !req.getStudent().getId().equals(user.getId())) {
+            throw new AppException(ErrorCode.FORBIDDEN, "Bạn không có quyền truy cập yêu cầu điểm danh lại này");
+        } else if (user.getRole() == Role.LECTURER) {
+            validateSessionAccess(principal, req.getSession());
+        }
+
+        return mapToRecheckResponse(req);
+    }
+
+    private AttendanceRecheckResponse mapToRecheckResponse(AttendanceRecheckRequest r) {
+        AttendanceSession session = r.getSession();
+        TimetableSlot slot = session != null ? session.getTimetableSlot() : null;
+        ClassSection cs = slot != null ? slot.getClassSection() : null;
+        Course course = cs != null ? cs.getCourse() : null;
+        Room room = slot != null ? slot.getRoom() : null;
+
+        String status = r.getStatus();
+        if ("PENDING".equalsIgnoreCase(status) && r.getExpiresAt() != null && LocalDateTime.now().isAfter(r.getExpiresAt())) {
+            status = "EXPIRED";
+        }
+
+        return AttendanceRecheckResponse.builder()
+                .requestId(r.getId())
+                .sessionId(session != null ? session.getId() : null)
+                .studentId(r.getStudent() != null ? r.getStudent().getId() : null)
+                .studentCode(r.getStudent() != null ? r.getStudent().getCode() : "")
+                .studentName(r.getStudent() != null ? r.getStudent().getFullName() : "")
+                .courseCode(course != null ? course.getCode() : "")
+                .courseName(course != null ? course.getName() : "")
+                .className(cs != null ? cs.getClassName() : "")
+                .roomCode(room != null ? room.getCode() : "")
+                .reason(r.getReason())
+                .status(status)
+                .requestedAt(r.getRequestedAt())
+                .expiresAt(r.getExpiresAt())
+                .completedAt(r.getCompletedAt())
+                .requestedByName(r.getRequestedBy() != null ? r.getRequestedBy().getFullName() : "")
                 .build();
     }
 }

@@ -15,10 +15,12 @@ class ClassSessionCard extends StatelessWidget {
   final String lecturerName;
   final String timeSlot;
   final AttendanceStatus? status;
+  final String? customStatusLabel;
   final String? timeRemaining;
   final double? attendanceRate;
   final String? attendanceCountText;
   final String? actionButtonText;
+  final IconData? actionButtonIcon;
   final VoidCallback? onActionButtonTap;
   final VoidCallback? onTap;
 
@@ -31,10 +33,12 @@ class ClassSessionCard extends StatelessWidget {
     required this.lecturerName,
     required this.timeSlot,
     this.status,
+    this.customStatusLabel,
     this.timeRemaining,
     this.attendanceRate,
     this.attendanceCountText,
     this.actionButtonText,
+    this.actionButtonIcon,
     this.onActionButtonTap,
     this.onTap,
   });
@@ -90,6 +94,7 @@ class ClassSessionCard extends StatelessWidget {
               else if (status != null)
                 AttendanceStatusBadge(
                   status: status!,
+                  customLabel: customStatusLabel,
                   isCompact: true,
                 ),
             ],
@@ -160,7 +165,7 @@ class ClassSessionCard extends StatelessWidget {
             ),
           ],
 
-          // Optional Action Button
+          // Optional Action Button (Unified Enabled & Disabled styling)
           if (actionButtonText != null) ...[
             const SizedBox(height: UniSpacing.spaceMd),
             SizedBox(
@@ -168,11 +173,27 @@ class ClassSessionCard extends StatelessWidget {
               height: 44,
               child: ElevatedButton.icon(
                 onPressed: onActionButtonTap,
-                icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+                icon: Icon(
+                  actionButtonIcon ??
+                      (onActionButtonTap != null
+                          ? Icons.qr_code_scanner_rounded
+                          : (status == AttendanceStatus.present ||
+                                  status == AttendanceStatus.late
+                              ? Icons.check_circle_outline_rounded
+                              : Icons.lock_outline_rounded)),
+                  size: 18,
+                ),
                 label: Text(actionButtonText!),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: UniColors.primary,
-                  foregroundColor: Colors.white,
+                  backgroundColor: onActionButtonTap != null
+                      ? UniColors.primary
+                      : const Color(0xFFF1F5F9),
+                  foregroundColor: onActionButtonTap != null
+                      ? Colors.white
+                      : UniColors.textMuted,
+                  disabledBackgroundColor: const Color(0xFFF1F5F9),
+                  disabledForegroundColor: UniColors.textMuted,
+                  elevation: onActionButtonTap != null ? 1 : 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: UniSpacing.borderRadiusMd,
                   ),

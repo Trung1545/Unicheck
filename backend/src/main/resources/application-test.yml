@@ -36,3 +36,16 @@ security:
 
 ai-service:
   url: http://localhost:5000
+
+
+unicheck:
+  testing:
+    static-qr:
+      enabled: true
+      allowed-class-name: UNICHECK-E2E-01,SE1801-PRJ301,SE1801-PRJ301-INT
+      ttl-minutes: 30
+    wifi-simulation:
+      enabled: true
+      allowed-class-name: UNICHECK-E2E-01,SE1801-PRJ301,SE1801-PRJ301-INT
+      simulated-ssid: AndroidWifi
+      simulated-bssid: "02:00:00:00:00:00"

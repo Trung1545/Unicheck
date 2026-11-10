@@ -5,10 +5,8 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../shared/widgets/attendance_metric_card.dart';
-import '../../../shared/widgets/attendance_status_badge.dart';
 import '../../../shared/widgets/class_session_card.dart';
 import '../../../shared/widgets/weekly_day_picker_strip.dart';
-import '../../attendance/controllers/attendance_controller.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../controllers/dashboard_controller.dart';
 
@@ -39,6 +37,9 @@ class StudentDashboardView extends StatelessWidget {
             _buildProfileGreetingCard(authController),
             const SizedBox(height: UniSpacing.spaceMd),
 
+            // 1.5 Recheck Requests Banner (If any)
+            Obx(() => _buildRecheckBanner(context, controller)),
+
             // 2. Prominent Quick Check-in CTA Card
             Obx(() => _buildQuickCheckInCard(context, controller)),
             const SizedBox(height: UniSpacing.spaceMd),
@@ -52,7 +53,7 @@ class StudentDashboardView extends StatelessWidget {
             const SizedBox(height: UniSpacing.spaceLg),
 
             // 5. Weekly Timetable Preview Module
-            Obx(() => _buildWeeklyTimetablePreview(controller)),
+            Obx(() => _buildWeeklyTimetablePreview(context, controller)),
             const SizedBox(height: UniSpacing.spaceLg),
 
             // 6. Course Attendance Health & Eligibility List
@@ -210,6 +211,134 @@ class StudentDashboardView extends StatelessWidget {
         ),
       );
     });
+  }
+
+  // --- 1.5 Recheck Requests Alert Banner ---
+  Widget _buildRecheckBanner(
+      BuildContext context, DashboardController controller) {
+    final pending = controller.pendingRechecks;
+    if (pending.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      children: pending.map((recheck) {
+        final expires = recheck.expiresAt;
+        final expStr = expires != null
+            ? '${expires.hour.toString().padLeft(2, '0')}:${expires.minute.toString().padLeft(2, '0')}'
+            : '';
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: UniSpacing.spaceMd),
+          padding: const EdgeInsets.all(UniSpacing.spaceMd),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED),
+            borderRadius: UniSpacing.borderRadiusLg,
+            border: Border.all(color: const Color(0xFFF97316), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFF97316).withValues(alpha: 0.15),
+                offset: const Offset(0, 4),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header Badge & Expiration
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: UniSpacing.spaceSm, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEA580C),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.sync_problem_rounded,
+                            size: 14, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Text(
+                          'YÊU CẦU ĐIỂM DANH LẠI',
+                          style: UniTypography.labelSmall.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (expStr.isNotEmpty)
+                    Row(
+                      children: [
+                        const Icon(Icons.timer_outlined,
+                            size: 14, color: Color(0xFFC2410C)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Hạn: $expStr',
+                          style: UniTypography.labelSmall.copyWith(
+                            color: const Color(0xFFC2410C),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+              const SizedBox(height: UniSpacing.spaceSm),
+
+              // Course & Class name
+              Text(
+                '${recheck.courseCode} - ${recheck.className}',
+                style: UniTypography.titleMedium.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF9A3412),
+                ),
+              ),
+              const SizedBox(height: 4),
+
+              // Reason from Lecturer
+              Text(
+                'Giảng viên ${recheck.requestedByName} yêu cầu: "${recheck.reason}"',
+                style: UniTypography.bodyMedium.copyWith(
+                  color: const Color(0xFF7C2D12),
+                ),
+              ),
+              const SizedBox(height: UniSpacing.spaceMd),
+
+              // CTA Button to Check-in
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => controller.handleRecheckTap(context, recheck),
+                  icon: const Icon(Icons.qr_code_scanner_rounded, size: 20),
+                  label: const Text(
+                    'Điểm danh lại ngay',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFEA580C),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
   }
 
   // --- 2. Prominent Quick Check-in CTA Card ---
@@ -518,9 +647,10 @@ class StudentDashboardView extends StatelessWidget {
             room: nextSlot.roomDisplay,
             lecturerName: nextSlot.lecturerDisplay,
             timeSlot: nextSlot.timeSlot,
-            status: nextSlot.hasAttendanceSession
-                ? AttendanceStatus.ongoing
-                : AttendanceStatus.scheduled,
+            status: nextSlot.getAttendanceBadgeStatus(
+                isEnrolled: controller.isStudentEnrolled(nextSlot)),
+            customStatusLabel: nextSlot.getAttendanceBadgeLabel(
+                isEnrolled: controller.isStudentEnrolled(nextSlot)),
             timeRemaining: 'Hôm nay',
           )
         else
@@ -555,7 +685,8 @@ class StudentDashboardView extends StatelessWidget {
   }
 
   // --- 5. Weekly Timetable Preview Module ---
-  Widget _buildWeeklyTimetablePreview(DashboardController controller) {
+  Widget _buildWeeklyTimetablePreview(
+      BuildContext context, DashboardController controller) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -597,6 +728,15 @@ class StudentDashboardView extends StatelessWidget {
         const SizedBox(height: UniSpacing.spaceSm),
         // Classes of selected day
         ...controller.selectedDaySlots.map((slot) {
+          final isEnrolled = controller.isStudentEnrolled(slot);
+          final canCheckIn = slot.canCheckInNow(isEnrolled: isEnrolled);
+          final buttonText =
+              slot.getAttendanceButtonText(isEnrolled: isEnrolled);
+          final badgeStatus =
+              slot.getAttendanceBadgeStatus(isEnrolled: isEnrolled);
+          final badgeLabel =
+              slot.getAttendanceBadgeLabel(isEnrolled: isEnrolled);
+
           return Padding(
             padding: const EdgeInsets.only(bottom: UniSpacing.spaceSm),
             child: ClassSessionCard(
@@ -606,9 +746,12 @@ class StudentDashboardView extends StatelessWidget {
               room: slot.roomDisplay,
               lecturerName: slot.lecturerDisplay,
               timeSlot: slot.timeSlot,
-              status: slot.hasAttendanceSession
-                  ? AttendanceStatus.ongoing
-                  : AttendanceStatus.scheduled,
+              status: badgeStatus,
+              customStatusLabel: badgeLabel,
+              actionButtonText: buttonText,
+              onActionButtonTap: canCheckIn
+                  ? () => controller.handleCheckInTap(context, slot)
+                  : null,
             ),
           );
         }),
@@ -779,13 +922,8 @@ class StudentDashboardView extends StatelessWidget {
 
   void _onCheckInPressed(BuildContext context, DashboardController controller) {
     final activeSlot = controller.activeAttendanceSession;
-    final attendanceController = Get.isRegistered<AttendanceController>()
-        ? Get.find<AttendanceController>()
-        : Get.put(AttendanceController());
-
     if (activeSlot != null) {
-      attendanceController.selectSession(activeSlot);
-      Get.toNamed(AppRoutes.qrScanner);
+      controller.handleCheckInTap(context, activeSlot);
     } else {
       Get.toNamed(AppRoutes.selectSession);
     }

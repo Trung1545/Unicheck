@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
+  Users,
   Cast,
   Maximize2,
   Minimize2,
@@ -32,6 +33,11 @@ import {
   X,
   Radio,
   FileCheck2,
+  FlaskConical,
+  Copy,
+  Check,
+  ShieldAlert,
+  KeyRound,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth-store';
 import {
@@ -39,7 +45,12 @@ import {
   getAttendanceSessionsApi,
   getSessionQrTokenApi,
   closeAttendanceSessionApi,
+  updateAttendanceSessionQrIntervalApi,
   getRecentCheckInsApi,
+  getStaticQrStatusApi,
+  getStaticQrTokenApi,
+  regenerateStaticQrTokenApi,
+  revokeStaticQrTokenApi,
 } from '../../api/attendance.api';
 import {
   AttendanceSessionResponse,
@@ -47,6 +58,7 @@ import {
   StudentAttendanceResponse,
 } from '../../types/api';
 import { DynamicQrCode } from '../../components/attendance/DynamicQrCode';
+import { SessionStudentManagementModal } from '../../components/attendance/SessionStudentManagementModal';
 
 type SimulationState = 'normal' | 'paused' | 'offline' | 'expired' | 'closed';
 
@@ -72,6 +84,16 @@ export const SessionQrCodePage: React.FC = () => {
   const [showCloseModal, setShowCloseModal] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [extendNotification, setExtendNotification] = useState<string | null>(null);
+  const [showIntervalModal, setShowIntervalModal] = useState<boolean>(false);
+  const [showStudentManagementModal, setShowStudentManagementModal] = useState<boolean>(false);
+  const [tempIntervalSeconds, setTempIntervalSeconds] = useState<number>(10);
+
+  // Static Test QR Mode State
+  const [qrMode, setQrMode] = useState<'DYNAMIC_QR' | 'STATIC_TEST_QR'>('DYNAMIC_QR');
+  const [staticQrAvailable, setStaticQrAvailable] = useState<boolean>(false);
+  const [staticQrReason, setStaticQrReason] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState<boolean>(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // 2. Interactive Testing Simulator State (Stitch lines 439-450)
   const [simulatedState, setSimulatedState] = useState<SimulationState>('normal');
@@ -131,27 +153,38 @@ export const SessionQrCodePage: React.FC = () => {
   }, [sessionIdQuery]);
 
   // =========================================================================
-  // Helper: Fetch Rotating QR Token (Server-Controlled with Anti-Race-Condition)
+  // Helper: Fetch QR Token (Dynamic or Static Test Mode)
   // =========================================================================
-  const fetchQrToken = useCallback(async (targetSessionId: number, isManual = false) => {
+  const fetchQrToken = useCallback(async (targetSessionId: number, isManual = false, overrideMode?: 'DYNAMIC_QR' | 'STATIC_TEST_QR') => {
     const currentRequestId = ++requestIdRef.current;
     if (isManual) setIsRefreshing(true);
+    const activeMode = overrideMode || qrMode;
 
     try {
-      const res = await getSessionQrTokenApi(targetSessionId);
+      let res;
+      if (activeMode === 'STATIC_TEST_QR') {
+        res = await getStaticQrTokenApi(targetSessionId);
+      } else {
+        res = await getSessionQrTokenApi(targetSessionId, 'DYNAMIC_QR');
+      }
+
       // Check for race condition: ignore late responses
       if (currentRequestId !== requestIdRef.current) return;
 
       if (res.success && res.data) {
         setQrData(res.data);
-        const rem = res.data.remainingSeconds > 0 ? res.data.remainingSeconds : res.data.rotationIntervalSeconds;
-        setCountdown(rem);
+        if (activeMode === 'STATIC_TEST_QR') {
+          setCountdown(res.data.remainingSeconds > 0 ? res.data.remainingSeconds : 1800);
+        } else {
+          const rem = res.data.remainingSeconds > 0 ? res.data.remainingSeconds : res.data.rotationIntervalSeconds;
+          setCountdown(rem);
+        }
         setError(null);
       }
     } catch (err: any) {
       if (currentRequestId !== requestIdRef.current) return;
-      console.error('Failed to fetch dynamic QR token:', err);
-      const msg = err?.response?.data?.message || 'Không thể lấy mã QR xoay vòng từ máy chủ';
+      console.error('Failed to fetch QR token:', err);
+      const msg = err?.response?.data?.message || 'Không thể lấy mã QR từ máy chủ';
       if (err?.response?.data?.errorCode === 'ERR_3024' || err?.response?.data?.errorCode === 'ERR_3006') {
         setSimulatedState('closed');
       } else if (!navigator.onLine) {
@@ -162,7 +195,75 @@ export const SessionQrCodePage: React.FC = () => {
         setIsRefreshing(false);
       }
     }
+  }, [qrMode]);
+
+  // =========================================================================
+  // Helper: Check Static Test QR Capability
+  // =========================================================================
+  const checkCapability = useCallback(async (targetSessionId: number) => {
+    try {
+      const res = await getStaticQrStatusApi(targetSessionId);
+      if (res.success && res.data) {
+        setStaticQrAvailable(res.data.allowed);
+        setStaticQrReason(res.data.reason || null);
+      }
+    } catch (err) {
+      setStaticQrAvailable(false);
+    }
   }, []);
+
+  // =========================================================================
+  // Static Test QR Mode Action Handlers
+  // =========================================================================
+  const handleSwitchMode = async (newMode: 'DYNAMIC_QR' | 'STATIC_TEST_QR') => {
+    if (newMode === qrMode || !session) return;
+    setQrMode(newMode);
+    await fetchQrToken(session.id, true, newMode);
+  };
+
+  const handleRegenerateStaticQr = async () => {
+    if (!session) return;
+    setActionLoading(true);
+    try {
+      const res = await regenerateStaticQrTokenApi(session.id);
+      if (res.success && res.data) {
+        setQrData(res.data);
+        setCountdown(res.data.remainingSeconds > 0 ? res.data.remainingSeconds : 1800);
+        setActionMessage('Đã tái tạo mã Static Test QR mới thành công!');
+        setTimeout(() => setActionMessage(null), 3000);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Không thể tạo lại mã Static Test QR');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRevokeStaticQr = async () => {
+    if (!session) return;
+    setActionLoading(true);
+    try {
+      await revokeStaticQrTokenApi(session.id);
+      setQrData(null);
+      setActionMessage('Đã thu hồi mã Static Test QR. Mã hiện tại không còn hiệu lực.');
+      setTimeout(() => setActionMessage(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Không thể thu hồi mã Static Test QR');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCopyToken = () => {
+    if (!qrData?.qrToken) return;
+    navigator.clipboard.writeText(qrData.qrToken);
+    setCopiedToken(true);
+    setActionMessage('Đã sao chép token test vào Clipboard!');
+    setTimeout(() => {
+      setCopiedToken(false);
+      setActionMessage(null);
+    }, 2500);
+  };
 
   // =========================================================================
   // Helper: Fetch Live Recent Check-Ins
@@ -190,6 +291,7 @@ export const SessionQrCodePage: React.FC = () => {
         setLoading(false);
         return;
       }
+      checkCapability(sess.id);
       fetchQrToken(sess.id).finally(() => {
         if (isMounted) setLoading(false);
       });
@@ -199,7 +301,7 @@ export const SessionQrCodePage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [loadSession, fetchQrToken, loadRecentCheckIns]);
+  }, [loadSession, fetchQrToken, loadRecentCheckIns, checkCapability]);
 
   // =========================================================================
   // 1-Second Countdown Timer & Rotation Engine
@@ -215,9 +317,18 @@ export const SessionQrCodePage: React.FC = () => {
       }
 
       setCountdown((prev) => {
+        if (qrMode === 'STATIC_TEST_QR') {
+          // Static Mode: Do NOT auto-refresh or rotate
+          if (prev <= 1) {
+            setSimulatedState('expired');
+            return 0;
+          }
+          return prev - 1;
+        }
+
+        // Dynamic Mode: Rotate when reaching 1
         if (prev <= 1) {
-          // Trigger rotation from Backend
-          fetchQrToken(session.id);
+          fetchQrToken(session.id, false, 'DYNAMIC_QR');
           return qrData?.rotationIntervalSeconds || 10;
         }
         return prev - 1;
@@ -229,7 +340,7 @@ export const SessionQrCodePage: React.FC = () => {
         clearInterval(countdownIntervalRef.current);
       }
     };
-  }, [loading, session, qrData, isPaused, simulatedState, fetchQrToken]);
+  }, [loading, session, qrData, isPaused, simulatedState, qrMode, fetchQrToken]);
 
   // =========================================================================
   // Session Elapsed Time Ticker (MM:SS)
@@ -314,6 +425,27 @@ export const SessionQrCodePage: React.FC = () => {
   // =========================================================================
   // Extend Session Handler
   // =========================================================================
+  const handleUpdateInterval = async (interval: number) => {
+    if (!session) return;
+    setActionLoading(true);
+    try {
+      const res = await updateAttendanceSessionQrIntervalApi(session.id, {
+        qrRotationIntervalSeconds: interval,
+      });
+      if (res.success) {
+        setShowIntervalModal(false);
+        setExtendNotification(`Đã đổi chu kỳ mã QR thành ${interval} giây`);
+        setTimeout(() => setExtendNotification(null), 4000);
+        await fetchQrToken(session.id, true, 'DYNAMIC_QR');
+      }
+    } catch (err: any) {
+      console.error('Failed to update QR interval:', err);
+      setError(err?.response?.data?.message || err.message || 'Lỗi khi cập nhật thời gian mã QR');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleExtendSession = () => {
     setExtendNotification('Đã gia hạn thêm 10 phút vào khung giờ ca học thành công!');
     setTimeout(() => setExtendNotification(null), 4000);
@@ -541,16 +673,54 @@ export const SessionQrCodePage: React.FC = () => {
         {/* LEFT: Big Projector Screen Stage (8 cols) */}
         <div className="lg:col-span-7 xl:col-span-8 bg-surface-container-lowest rounded-xl p-space-xl shadow-md border border-surface-container-high flex flex-col justify-between relative transition-all duration-300" id="projectorStage">
           {/* Top Action bar on Projector Card */}
-          <div className="flex items-center justify-between pb-space-lg mb-space-lg border-b border-surface-container-high">
+          <div className="flex flex-wrap items-center justify-between pb-space-lg mb-space-lg border-b border-surface-container-high gap-3">
             <div className="flex items-center gap-space-sm">
               <Cast className="w-6 h-6 text-primary" />
               <div>
-                <span className="font-label-lg text-label-lg text-on-surface font-semibold">Màn chiếu QR điểm danh động</span>
-                <span className="font-body-sm text-body-sm text-on-surface-variant block">Chiếu toàn màn hình giảng đường qua cổng HDMI / DisplayPort</span>
+                <span className="font-label-lg text-label-lg text-on-surface font-semibold">
+                  {qrMode === 'STATIC_TEST_QR' ? 'Màn chiếu QR điểm danh Test (Emulator)' : 'Màn chiếu QR điểm danh động'}
+                </span>
+                <span className="font-body-sm text-body-sm text-on-surface-variant block">
+                  {qrMode === 'STATIC_TEST_QR'
+                    ? 'Chế độ QR cố định không xoay vòng phục vụ kiểm thử môi trường dev/test'
+                    : 'Chiếu toàn màn hình giảng đường qua cổng HDMI / DisplayPort'}
+                </span>
               </div>
             </div>
 
-            <div className="flex items-center gap-space-sm">
+            <div className="flex items-center gap-space-sm flex-wrap">
+              {/* Mode Selector - Chỉ hiển thị khi Backend xác nhận môi trường test hợp lệ */}
+              {staticQrAvailable && (
+                <div className="flex items-center p-1 bg-surface-container rounded-lg border border-surface-container-high" id="qrModeSelector">
+                  <button
+                    onClick={() => handleSwitchMode('DYNAMIC_QR')}
+                    disabled={session?.status === 'CLOSED'}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                      qrMode === 'DYNAMIC_QR'
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                    id="dynamicQrModeBtn"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    QR Động
+                  </button>
+                  <button
+                    onClick={() => handleSwitchMode('STATIC_TEST_QR')}
+                    disabled={session?.status === 'CLOSED'}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                      qrMode === 'STATIC_TEST_QR'
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'text-amber-700 dark:text-amber-400 hover:text-amber-800'
+                    }`}
+                    id="staticTestQrModeBtn"
+                  >
+                    <FlaskConical className="w-3.5 h-3.5" />
+                    QR Test Cố Định
+                  </button>
+                </div>
+              )}
+
               <button
                 onClick={toggleFullscreen}
                 className="flex items-center gap-space-xs px-space-md py-space-xs rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-label-md transition-colors shadow-sm"
@@ -561,75 +731,114 @@ export const SessionQrCodePage: React.FC = () => {
                 <span>{isFullscreen ? 'Thu nhỏ' : 'Toàn màn hình (F11)'}</span>
               </button>
 
-              <button
-                onClick={() => {
-                  if (session) fetchQrToken(session.id, true);
-                }}
-                disabled={isRefreshing || session?.status === 'CLOSED'}
-                className="flex items-center gap-space-xs px-space-md py-space-xs rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-md transition-colors disabled:opacity-50"
-                id="manualRefreshBtn"
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>Đổi mã ngay</span>
-              </button>
+              {qrMode === 'DYNAMIC_QR' && (
+                <button
+                  onClick={() => {
+                    if (session) fetchQrToken(session.id, true);
+                  }}
+                  disabled={isRefreshing || session?.status === 'CLOSED'}
+                  className="flex items-center gap-space-xs px-space-md py-space-xs rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-md transition-colors disabled:opacity-50"
+                  id="manualRefreshBtn"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span>Đổi mã ngay</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Center Dynamic QR Visual & Countdown Ring */}
-          <div className="flex flex-col items-center justify-center py-space-md px-space-sm relative">
-            {/* Rotating Countdown Ring Indicator */}
-            <div className="flex items-center gap-space-md mb-space-md bg-surface-container-low px-space-lg py-space-sm rounded-full shadow-sm">
-              {/* Mini SVG Radial Timer */}
-              <div className="relative w-8 h-8 flex items-center justify-center shrink-0">
-                <svg className="w-8 h-8 transform -rotate-90">
-                  <circle
-                    className="text-surface-container-high"
-                    cx="16"
-                    cy="16"
-                    fill="transparent"
-                    r={circleRadius}
-                    stroke="currentColor"
-                    strokeWidth="3"
-                  />
-                  <circle
-                    className="text-primary transition-all duration-1000 ease-linear"
-                    cx="16"
-                    cy="16"
-                    fill="transparent"
-                    id="countdownSvgCircle"
-                    r={circleRadius}
-                    stroke="currentColor"
-                    strokeDasharray={circleCircumference}
-                    strokeDashoffset={strokeOffset}
-                    strokeLinecap="round"
-                    strokeWidth="3"
-                  />
-                </svg>
-                <span className="absolute font-data-tabular font-bold text-label-md text-primary" id="countdownNumberText">
-                  {countdown.toString().padStart(2, '0')}
-                </span>
-              </div>
-
-              <div className="text-left">
-                <div className="font-label-md text-label-md text-on-surface">
-                  Mã QR sẽ làm mới sau:{' '}
-                  <span className="text-primary font-bold" id="countdownBadgeText">
-                    {countdown.toString().padStart(2, '0')}s
-                  </span>{' '}
-                  <span className="text-on-surface-variant font-normal">
-                    (Chu kỳ {rotationTotal}s)
+          {/* Test Mode Banner */}
+          {qrMode === 'STATIC_TEST_QR' && (
+            <div className="mb-space-md p-space-sm bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between text-amber-700 dark:text-amber-400 w-full max-w-xl mx-auto" id="staticTestModeBanner">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="w-5 h-5 text-amber-600 shrink-0 animate-pulse" />
+                <div>
+                  <span className="font-bold text-xs tracking-wide bg-amber-500/20 px-2 py-0.5 rounded text-amber-800 dark:text-amber-300 mr-2">
+                    TEST MODE
+                  </span>
+                  <span className="text-xs font-medium">
+                    Mã QR Test cố định cho lớp {session?.className || 'UNICHECK-E2E-01'}
                   </span>
                 </div>
-                {/* Dynamic shrink bar */}
-                <div className="w-48 h-1.5 bg-surface-container-high rounded-full overflow-hidden mt-1">
-                  <div
-                    className="h-full bg-primary rounded-full transition-all duration-1000 ease-linear"
-                    id="countdownProgressBar"
-                    style={{ width: `${progressRatio * 100}%` }}
-                  />
+              </div>
+              <span className="text-xs bg-amber-500/20 px-2 py-0.5 rounded-full font-semibold">
+                Không xoay vòng
+              </span>
+            </div>
+          )}
+
+          {/* Center Dynamic QR Visual & Countdown Ring */}
+          <div className="flex flex-col items-center justify-center py-space-md px-space-sm relative">
+            {qrMode === 'STATIC_TEST_QR' ? (
+              <div className="flex items-center gap-space-md mb-space-md bg-amber-500/10 border border-amber-500/30 px-space-lg py-space-sm rounded-full shadow-sm" id="staticExpiryBadge">
+                <Clock className="w-5 h-5 text-amber-600" />
+                <div className="text-left">
+                  <div className="font-label-md text-label-md text-on-surface">
+                    Thời gian hết hạn:{' '}
+                    <span className="text-amber-600 font-bold" id="staticCountdownText">
+                      {Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')}
+                    </span>{' '}
+                    <span className="text-on-surface-variant font-normal text-xs">
+                      (Cố định trong suốt phiên test)
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              /* Rotating Countdown Ring Indicator for Dynamic Mode */
+              <div className="flex items-center gap-space-md mb-space-md bg-surface-container-low px-space-lg py-space-sm rounded-full shadow-sm">
+                {/* Mini SVG Radial Timer */}
+                <div className="relative w-8 h-8 flex items-center justify-center shrink-0">
+                  <svg className="w-8 h-8 transform -rotate-90">
+                    <circle
+                      className="text-surface-container-high"
+                      cx="16"
+                      cy="16"
+                      fill="transparent"
+                      r={circleRadius}
+                      stroke="currentColor"
+                      strokeWidth="3"
+                    />
+                    <circle
+                      className="text-primary transition-all duration-1000 ease-linear"
+                      cx="16"
+                      cy="16"
+                      fill="transparent"
+                      id="countdownSvgCircle"
+                      r={circleRadius}
+                      stroke="currentColor"
+                      strokeDasharray={circleCircumference}
+                      strokeDashoffset={strokeOffset}
+                      strokeLinecap="round"
+                      strokeWidth="3"
+                    />
+                  </svg>
+                  <span className="absolute font-data-tabular font-bold text-label-md text-primary" id="countdownNumberText">
+                    {countdown.toString().padStart(2, '0')}
+                  </span>
+                </div>
+
+                <div className="text-left">
+                  <div className="font-label-md text-label-md text-on-surface">
+                    Mã QR sẽ làm mới sau:{' '}
+                    <span className="text-primary font-bold" id="countdownBadgeText">
+                      {countdown.toString().padStart(2, '0')}s
+                    </span>{' '}
+                    <span className="text-on-surface-variant font-normal">
+                      (Chu kỳ {rotationTotal}s)
+                    </span>
+                  </div>
+                  {/* Dynamic shrink bar */}
+                  <div className="w-48 h-1.5 bg-surface-container-high rounded-full overflow-hidden mt-1">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-1000 ease-linear"
+                      id="countdownProgressBar"
+                      style={{ width: `${progressRatio * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* High-Contrast QR Viewport with Corner Security Accents */}
             <div className="relative">
@@ -649,11 +858,84 @@ export const SessionQrCodePage: React.FC = () => {
               {renderQrOverlay()}
             </div>
 
+            {/* Mã OTP Điểm Danh 6 chữ số (Tự động thay đổi đồng bộ theo chu kỳ QR) */}
+            {session?.status !== 'CLOSED' && qrData?.otpCode && (
+              <div
+                className="mt-space-md flex flex-col items-center gap-space-xs w-full max-w-md p-space-md bg-surface-container-low border border-primary/20 rounded-2xl shadow-sm"
+                id="attendanceOtpBox"
+              >
+                <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                  <KeyRound className="w-4 h-4 text-primary" />
+                  <span className="font-label-lg tracking-wide uppercase">Mã OTP điểm danh</span>
+                </div>
+
+                <div className="text-xs text-on-surface-variant text-center">
+                  Sinh viên có thể chọn nhập mã OTP 6 chữ số này trên ứng dụng UniCheck Mobile thay cho quét camera
+                </div>
+
+                {/* High-visibility 6-digit OTP Display */}
+                <div className="my-2 flex items-center justify-center gap-2" id="otpCodeDisplay">
+                  <div
+                    className="font-mono text-4xl font-black tracking-[0.25em] text-primary bg-surface-container-high px-8 py-2.5 rounded-2xl border-2 border-primary/30 shadow-inner select-all text-center"
+                    title="Mã OTP điểm danh 6 chữ số (giữ nguyên số 0 ở đầu)"
+                  >
+                    {qrData.otpCode}
+                  </div>
+                </div>
+
+                {/* Countdown Timer synced with rotation */}
+                <div className="flex items-center gap-1.5 text-xs text-on-surface-variant font-medium">
+                  <Clock className="w-3.5 h-3.5 text-secondary" />
+                  <span>
+                    Mã tự động đổi sau:{' '}
+                    <strong className="text-secondary font-bold" id="otpCountdownText">
+                      {countdown.toString().padStart(2, '0')}s
+                    </strong>{' '}
+                    (chu kỳ {rotationTotal}s)
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Static Test QR Management Actions if in Test Mode */}
+            {qrMode === 'STATIC_TEST_QR' && qrData && (
+              <div className="mt-space-sm flex flex-col items-center gap-space-sm w-full max-w-md" id="staticQrActionBox">
+                <div className="flex items-center gap-space-sm">
+                  <button
+                    onClick={handleRegenerateStaticQr}
+                    disabled={actionLoading || session?.status === 'CLOSED'}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-amber-700 dark:text-amber-400 font-medium transition-colors text-xs border border-amber-500/30 disabled:opacity-50"
+                    id="regenerateStaticQrBtn"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${actionLoading ? 'animate-spin' : ''}`} />
+                    Tạo lại QR Test
+                  </button>
+                  <button
+                    onClick={handleRevokeStaticQr}
+                    disabled={actionLoading || session?.status === 'CLOSED'}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-error-container/20 hover:bg-error-container/40 text-error font-medium transition-colors text-xs border border-error/30 disabled:opacity-50"
+                    id="revokeStaticQrBtn"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    Thu hồi mã
+                  </button>
+                </div>
+
+                {actionMessage && (
+                  <div className="text-xs text-primary font-medium" id="staticQrActionMsg">
+                    {actionMessage}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Verification instruction below QR */}
             <div className="mt-space-md text-center max-w-md">
               <div className="font-label-lg text-label-lg text-primary flex items-center justify-center gap-1.5 font-semibold">
                 <ShieldCheck className="w-5 h-5" />
-                Mã QR xoay vòng bảo mật - Sinh viên quét qua App UniCheck trên điện thoại
+                {qrMode === 'STATIC_TEST_QR'
+                  ? 'Mã QR Test cố định - Hỗ trợ Android Emulator quét hoặc dán token kiểm thử'
+                  : 'Mã QR xoay vòng bảo mật - Sinh viên quét qua App UniCheck trên điện thoại'}
               </div>
               <div className="mt-space-xs p-space-sm rounded-lg bg-surface-container-low text-on-surface-variant font-body-sm text-body-sm leading-relaxed border border-surface-container-high">
                 <span className="font-semibold text-on-surface">Cơ chế an toàn:</span> Token một lần (One-Time Token) kết hợp mã hóa vị trí GPS và BSSID Wi-Fi phòng học. Nghiêm cấm chụp màn hình chia sẻ ra ngoài.
@@ -682,6 +964,30 @@ export const SessionQrCodePage: React.FC = () => {
               >
                 <Clock className="w-5 h-5" />
                 <span>Gia hạn thêm 10 phút</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setTempIntervalSeconds(qrData?.rotationIntervalSeconds || session?.qrRotationIntervalSeconds || 10);
+                  setShowIntervalModal(true);
+                }}
+                disabled={session?.status === 'CLOSED'}
+                className="flex items-center gap-space-xs px-space-md py-space-sm rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-label-md transition-colors"
+                id="changeQrIntervalBtn"
+                title="Thay đổi chu kỳ đổi mã QR"
+              >
+                <Sliders className="w-5 h-5 text-primary" />
+                <span>Chu kỳ: {rotationTotal}s</span>
+              </button>
+            
+              <button
+                onClick={() => setShowStudentManagementModal(true)}
+                className="flex items-center gap-space-xs px-space-md py-space-sm rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 font-label-md transition-colors shadow-xs"
+                id="manageStudentsBtn"
+                title="Quản lý sinh viên & Yêu cầu điểm danh lại"
+              >
+                <Users className="w-5 h-5 text-primary" />
+                <span>Quản lý SV & Re-check</span>
               </button>
             </div>
 
@@ -890,10 +1196,10 @@ export const SessionQrCodePage: React.FC = () => {
             </div>
 
             <button
-              onClick={() => navigate(`/lecturer/attendance-session`)}
+              onClick={() => setShowStudentManagementModal(true)}
               className="w-full mt-space-md py-space-xs text-center rounded-lg bg-surface-container-low hover:bg-surface-container text-primary font-label-md transition-colors flex items-center justify-center gap-1"
             >
-              <span>Xem toàn bộ danh sách điểm danh ({presentCount}/{totalEnrolled})</span>
+              <span>Quản lý danh sách SV & Điểm danh lại ({presentCount}/{totalEnrolled})</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -1011,6 +1317,16 @@ export const SessionQrCodePage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Session Student Management & Re-check Modal */}
+      <SessionStudentManagementModal
+        session={session}
+        isOpen={showStudentManagementModal}
+        onClose={() => setShowStudentManagementModal(false)}
+        onSessionUpdated={() => {
+          loadSession();
+        }}
+      />
     </div>
   );
 };

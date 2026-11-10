@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.Collection;
 import java.util.List;
 
 @Repository
@@ -32,6 +34,25 @@ public interface TimetableSlotRepository extends JpaRepository<TimetableSlot, Lo
     );
 
     /**
+     * 1b. Tìm xung đột phòng học theo khoảng thời gian thực (start_time < requested.end AND requested.start < end_time)
+     */
+    @Query("SELECT s FROM TimetableSlot s " +
+           "WHERE s.room.id = :roomId " +
+           "AND s.date = :date " +
+           "AND (:excludeId IS NULL OR s.id != :excludeId) " +
+           "AND s.status != com.unicheck.model.enums.TimetableSlotStatus.CANCELLED " +
+           "AND ((s.startTime IS NOT NULL AND s.endTime IS NOT NULL AND s.startTime < :endTime AND :startTime < s.endTime) " +
+           "     OR (s.startTime IS NULL AND :slotNumber IS NOT NULL AND s.slotNumber = :slotNumber))")
+    List<TimetableSlot> findRoomConflictsByInterval(
+            @Param("roomId") Long roomId,
+            @Param("date") LocalDate date,
+            @Param("startTime") LocalTime startTime,
+            @Param("endTime") LocalTime endTime,
+            @Param("slotNumber") Integer slotNumber,
+            @Param("excludeId") Long excludeId
+    );
+
+    /**
      * 2. Tìm xung đột giảng viên: cùng giảng viên, cùng ngày, cùng tiết (loại trừ slot hiện tại và slot đã hủy)
      */
     @Query("SELECT s FROM TimetableSlot s " +
@@ -48,6 +69,25 @@ public interface TimetableSlotRepository extends JpaRepository<TimetableSlot, Lo
     );
 
     /**
+     * 2b. Tìm xung đột giảng viên theo khoảng thời gian thực (start_time < requested.end AND requested.start < end_time)
+     */
+    @Query("SELECT s FROM TimetableSlot s " +
+           "WHERE s.classSection.lecturer.id = :lecturerId " +
+           "AND s.date = :date " +
+           "AND (:excludeId IS NULL OR s.id != :excludeId) " +
+           "AND s.status != com.unicheck.model.enums.TimetableSlotStatus.CANCELLED " +
+           "AND ((s.startTime IS NOT NULL AND s.endTime IS NOT NULL AND s.startTime < :endTime AND :startTime < s.endTime) " +
+           "     OR (s.startTime IS NULL AND :slotNumber IS NOT NULL AND s.slotNumber = :slotNumber))")
+    List<TimetableSlot> findLecturerConflictsByInterval(
+            @Param("lecturerId") Long lecturerId,
+            @Param("date") LocalDate date,
+            @Param("startTime") LocalTime startTime,
+            @Param("endTime") LocalTime endTime,
+            @Param("slotNumber") Integer slotNumber,
+            @Param("excludeId") Long excludeId
+    );
+
+    /**
      * 3. Tìm xung đột lớp học phần: cùng lớp học phần, cùng ngày, cùng tiết (loại trừ slot hiện tại và slot đã hủy)
      */
     @Query("SELECT s FROM TimetableSlot s " +
@@ -59,6 +99,43 @@ public interface TimetableSlotRepository extends JpaRepository<TimetableSlot, Lo
     List<TimetableSlot> findClassConflicts(
             @Param("className") String className,
             @Param("date") LocalDate date,
+            @Param("slotNumber") Integer slotNumber,
+            @Param("excludeId") Long excludeId
+    );
+
+    /**
+     * 3b. Tìm xung đột lớp học phần theo khoảng thời gian thực (start_time < requested.end AND requested.start < end_time)
+     */
+    @Query("SELECT s FROM TimetableSlot s " +
+           "WHERE s.classSection.className = :className " +
+           "AND s.date = :date " +
+           "AND (:excludeId IS NULL OR s.id != :excludeId) " +
+           "AND s.status != com.unicheck.model.enums.TimetableSlotStatus.CANCELLED " +
+           "AND ((s.startTime IS NOT NULL AND s.endTime IS NOT NULL AND s.startTime < :endTime AND :startTime < s.endTime) " +
+           "     OR (s.startTime IS NULL AND :slotNumber IS NOT NULL AND s.slotNumber = :slotNumber))")
+    List<TimetableSlot> findClassConflictsByInterval(
+            @Param("className") String className,
+            @Param("date") LocalDate date,
+            @Param("startTime") LocalTime startTime,
+            @Param("endTime") LocalTime endTime,
+            @Param("slotNumber") Integer slotNumber,
+            @Param("excludeId") Long excludeId
+    );
+
+    /**
+     * 3c. Tìm tất cả các phòng đang có lịch học trùng khoảng thời gian trên danh sách các ngày
+     */
+    @Query("SELECT DISTINCT s.room.id FROM TimetableSlot s " +
+           "WHERE s.room.id IS NOT NULL " +
+           "AND s.date IN :dates " +
+           "AND (:excludeId IS NULL OR s.id != :excludeId) " +
+           "AND s.status != com.unicheck.model.enums.TimetableSlotStatus.CANCELLED " +
+           "AND ((s.startTime IS NOT NULL AND s.endTime IS NOT NULL AND s.startTime < :endTime AND :startTime < s.endTime) " +
+           "     OR (s.startTime IS NULL AND :slotNumber IS NOT NULL AND s.slotNumber = :slotNumber))")
+    List<Long> findOccupiedRoomIdsOnDates(
+            @Param("dates") Collection<LocalDate> dates,
+            @Param("startTime") LocalTime startTime,
+            @Param("endTime") LocalTime endTime,
             @Param("slotNumber") Integer slotNumber,
             @Param("excludeId") Long excludeId
     );

@@ -8,6 +8,7 @@ import {
   ApiResponse,
   AttendanceConfigDto,
   AttendanceSessionCreateRequest,
+  AttendanceSessionOpenRequest,
   AttendanceSessionQueryParams,
   AttendanceSessionResponse,
   AttendanceSessionStatsResponse,
@@ -15,6 +16,13 @@ import {
   PageResponse,
   StudentAttendanceResponse,
 } from '../types/api';
+import {
+  SessionStudentAttendanceDto,
+  AttendanceManualAdjustRequest,
+  AttendanceRecheckCreateRequest,
+  AttendanceRecheckResponse,
+  AttendanceHistoryRecordDto,
+} from '../types/attendance';
 
 /**
  * 1. Lấy danh sách phiên điểm danh có phân trang, tìm kiếm và lọc (GET /api/v1/attendance/sessions)
@@ -77,9 +85,20 @@ export const createAttendanceSessionApi = async (
  * 4. Mở phiên điểm danh (POST /api/v1/attendance/sessions/{id}/open)
  */
 export const openAttendanceSessionApi = async (
-  id: number
+  id: number,
+  data?: AttendanceSessionOpenRequest
 ): Promise<ApiResponse<AttendanceSessionResponse>> => {
-  return apiClient.post(`/attendance/sessions/${id}/open`);
+  return apiClient.post(`/attendance/sessions/${id}/open`, data);
+};
+
+/**
+ * 4b. Cập nhật chu kỳ đổi mã QR động (PUT /api/v1/attendance/sessions/{id}/qr-interval)
+ */
+export const updateAttendanceSessionQrIntervalApi = async (
+  id: number,
+  data: AttendanceSessionOpenRequest
+): Promise<ApiResponse<AttendanceSessionResponse>> => {
+  return apiClient.put(`/attendance/sessions/${id}/qr-interval`, data);
 };
 
 /**
@@ -137,12 +156,52 @@ export const getAttendanceCheckInsApi = async (
 };
 
 /**
- * 11. Lấy mã QR xoay vòng cho phiên điểm danh OPEN (GET /api/v1/attendance/sessions/{id}/qr)
+ * 11. Lấy mã QR cho phiên điểm danh OPEN (GET /api/v1/attendance/sessions/{id}/qr)
+ * Hỗ trợ mode='DYNAMIC_QR' hoặc mode='STATIC_TEST_QR'
  */
 export const getSessionQrTokenApi = async (
+  sessionId: number,
+  mode: string = 'DYNAMIC_QR'
+): Promise<ApiResponse<import('../types/attendance').QrTokenResponse>> => {
+  return apiClient.get(`/attendance/sessions/${sessionId}/qr`, {
+    params: { mode },
+  });
+};
+
+/**
+ * 11b. Kiểm tra điều kiện và trạng thái Static Test QR (GET /api/v1/attendance/sessions/{id}/static-qr/status)
+ */
+export const getStaticQrStatusApi = async (
+  sessionId: number
+): Promise<ApiResponse<import('../types/attendance').StaticQrStatusResponse>> => {
+  return apiClient.get(`/attendance/sessions/${sessionId}/static-qr/status`);
+};
+
+/**
+ * 11c. Lấy mã Static Test QR cố định (GET /api/v1/attendance/sessions/{id}/static-qr)
+ */
+export const getStaticQrTokenApi = async (
   sessionId: number
 ): Promise<ApiResponse<import('../types/attendance').QrTokenResponse>> => {
-  return apiClient.get(`/attendance/sessions/${sessionId}/qr`);
+  return apiClient.get(`/attendance/sessions/${sessionId}/static-qr`);
+};
+
+/**
+ * 11d. Tái tạo mã Static Test QR mới (POST /api/v1/attendance/sessions/{id}/static-qr/regenerate)
+ */
+export const regenerateStaticQrTokenApi = async (
+  sessionId: number
+): Promise<ApiResponse<import('../types/attendance').QrTokenResponse>> => {
+  return apiClient.post(`/attendance/sessions/${sessionId}/static-qr/regenerate`);
+};
+
+/**
+ * 11e. Thu hồi mã Static Test QR (POST /api/v1/attendance/sessions/{id}/static-qr/revoke)
+ */
+export const revokeStaticQrTokenApi = async (
+  sessionId: number
+): Promise<ApiResponse<void>> => {
+  return apiClient.post(`/attendance/sessions/${sessionId}/static-qr/revoke`);
 };
 
 /**
@@ -164,4 +223,48 @@ export const getRecentCheckInsApi = async (
   return apiClient.get(`/attendance/sessions/${sessionId}/recent-checkins`, {
     params: { limit },
   });
+};
+
+/**
+ * 14. Lấy toàn bộ danh sách sinh viên ghi danh trong phiên kèm trạng thái điểm danh và recheck
+ * (GET /api/v1/attendance/sessions/{sessionId}/students)
+ */
+export const getSessionStudentsApi = async (
+  sessionId: number
+): Promise<ApiResponse<SessionStudentAttendanceDto[]>> => {
+  return apiClient.get(`/attendance/sessions/${sessionId}/students`);
+};
+
+/**
+ * 15. Giảng viên điều chỉnh thủ công kết quả điểm danh của sinh viên (PRESENT, LATE, ABSENT) kèm lý do
+ * (PATCH /api/v1/attendance/sessions/{sessionId}/students/{studentId})
+ */
+export const adjustStudentAttendanceApi = async (
+  sessionId: number,
+  studentId: number,
+  data: AttendanceManualAdjustRequest
+): Promise<ApiResponse<StudentAttendanceResponse>> => {
+  return apiClient.patch(`/attendance/sessions/${sessionId}/students/${studentId}`, data);
+};
+
+/**
+ * 16. Giảng viên gửi yêu cầu điểm danh lại (Recheck Request) cho sinh viên
+ * (POST /api/v1/attendance/sessions/{sessionId}/students/{studentId}/recheck)
+ */
+export const createRecheckRequestApi = async (
+  sessionId: number,
+  studentId: number,
+  data: AttendanceRecheckCreateRequest
+): Promise<ApiResponse<AttendanceRecheckResponse>> => {
+  return apiClient.post(`/attendance/sessions/${sessionId}/students/${studentId}/recheck`, data);
+};
+
+/**
+ * 17. Lấy lịch sử điều chỉnh điểm danh và tái xác thực của phiên
+ * (GET /api/v1/attendance/sessions/{sessionId}/history)
+ */
+export const getSessionAdjustmentHistoryApi = async (
+  sessionId: number
+): Promise<ApiResponse<AttendanceHistoryRecordDto[]>> => {
+  return apiClient.get(`/attendance/sessions/${sessionId}/history`);
 };

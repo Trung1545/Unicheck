@@ -16,6 +16,8 @@ public class TimetableSlotResponse {
 
     private Long id;
 
+
+
     private String className;
 
     private String courseCode;
@@ -77,6 +79,12 @@ public class TimetableSlotResponse {
     private String note;
 
     private Boolean hasAttendanceSession;
+
+    private Long attendanceSessionId;
+
+    private String attendanceSessionStatus;
+
+    private String studentAttendanceStatus;
 
     private Boolean hasConflict;
 

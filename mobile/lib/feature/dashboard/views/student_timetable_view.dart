@@ -35,6 +35,76 @@ class StudentTimetableView extends StatelessWidget {
     return '$dayName, ngày ${date.day} tháng ${date.month}, ${date.year}';
   }
 
+  Widget _buildPendingRecheckBanner(
+      BuildContext context, DashboardController controller) {
+    final pending = controller.pendingRechecks;
+    if (pending.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      children: pending.map((recheck) {
+        final exp = recheck.expiresAt;
+        final expStr = exp != null
+            ? '${exp.hour.toString().padLeft(2, '0')}:${exp.minute.toString().padLeft(2, '0')}'
+            : '';
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: UniSpacing.spaceMd),
+          padding: const EdgeInsets.all(UniSpacing.spaceSm),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED),
+            borderRadius: UniSpacing.borderRadiusMd,
+            border: Border.all(color: const Color(0xFFF97316), width: 1.2),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.sync_problem_rounded, color: Color(0xFFEA580C), size: 24),
+              const SizedBox(width: UniSpacing.spaceSm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'YÊU CẦU ĐIỂM DANH LẠI: ${recheck.courseCode} (${recheck.className})',
+                      style: UniTypography.labelSmall.copyWith(
+                        color: const Color(0xFF9A3412),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Lý do: ${recheck.reason} (Hạn: $expStr)',
+                      style: UniTypography.bodySmall.copyWith(
+                        color: const Color(0xFF7C2D12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: UniSpacing.spaceSm),
+              ElevatedButton(
+                onPressed: () => controller.handleRecheckTap(context, recheck),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFEA580C),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                child: const Text('Điểm danh', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = Get.find<DashboardController>();
@@ -110,6 +180,9 @@ class StudentTimetableView extends StatelessWidget {
             ),
             const SizedBox(height: UniSpacing.spaceMd),
 
+            // Pending Recheck Banner
+            Obx(() => _buildPendingRecheckBanner(context, controller)),
+
             // Weekly Week Navigator
             Obx(() {
               final monday = controller.currentWeekStart.value;
@@ -127,29 +200,32 @@ class StudentTimetableView extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.chevron_left_rounded),
-                      color: UniColors.textPrimary,
-                      tooltip: 'Tuần trước',
+                      icon: const Icon(Icons.chevron_left_rounded,
+                          color: UniColors.primary),
                       onPressed: () => controller.previousWeek(),
+                      tooltip: 'Tuần trước',
                     ),
-                    Row(
+                    Column(
                       children: [
-                        const Icon(Icons.calendar_today_rounded,
-                            size: 16, color: UniColors.primary),
-                        const SizedBox(width: 8),
+                        Text(
+                          'Tuần ${monday.day}/${monday.month} - ${monday.add(const Duration(days: 6)).day}/${monday.add(const Duration(days: 6)).month}',
+                          style: UniTypography.titleMedium.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         Text(
                           _formatWeekRange(monday),
-                          style: UniTypography.labelLarge.copyWith(
-                            fontWeight: FontWeight.bold,
+                          style: UniTypography.caption.copyWith(
+                            color: UniColors.textSecondary,
                           ),
                         ),
                       ],
                     ),
                     IconButton(
-                      icon: const Icon(Icons.chevron_right_rounded),
-                      color: UniColors.textPrimary,
-                      tooltip: 'Tuần kế tiếp',
+                      icon: const Icon(Icons.chevron_right_rounded,
+                          color: UniColors.primary),
                       onPressed: () => controller.nextWeek(),
+                      tooltip: 'Tuần kế tiếp',
                     ),
                   ],
                 ),
@@ -157,63 +233,32 @@ class StudentTimetableView extends StatelessWidget {
             }),
             const SizedBox(height: UniSpacing.spaceSm),
 
-            // Horizontal 7-Day Date Strip
-            Obx(() => WeeklyDayPickerStrip(
-                  days: controller.weeklyDays,
-                  selectedIndex: controller.selectedDayIndex,
-                  onDaySelected: (idx) => controller.selectDay(idx),
-                )),
-            const SizedBox(height: UniSpacing.spaceMd),
-
-            // Daily Summary Strip
+            // Day Selector Strip
             Obx(() {
-              final selDate = controller.selectedDate.value;
-              final slots = controller.selectedDaySlots;
+              return WeeklyDayPickerStrip(
+                days: controller.weeklyDays,
+                selectedIndex: controller.selectedDayIndex,
+                onDaySelected: (index) => controller.selectDay(index),
+              );
+            }),
+            const SizedBox(height: UniSpacing.spaceLg),
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // Date Context Indicator
+            Obx(() {
+              final sel = controller.selectedDate.value;
+              return Row(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _formatDayHeading(selDate),
-                        style: UniTypography.titleMedium.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: UniColors.canvas,
-                          borderRadius: UniSpacing.borderRadiusFull,
-                          border: Border.all(color: UniColors.borderLight),
-                        ),
-                        child: Text(
-                          'Học kỳ 241',
-                          style: UniTypography.labelSmall.copyWith(
-                            color: UniColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
+                  const Icon(
+                    Icons.calendar_today_rounded,
+                    size: 16,
+                    color: UniColors.primary,
                   ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: UniColors.secondaryLight.withValues(alpha: 0.5),
-                      borderRadius: UniSpacing.borderRadiusFull,
-                    ),
-                    child: Text(
-                      '${slots.length} lớp học trong ngày',
-                      style: UniTypography.labelSmall.copyWith(
-                        color: UniColors.secondary,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  const SizedBox(width: UniSpacing.spaceSm),
+                  Text(
+                    _formatDayHeading(sel),
+                    style: UniTypography.titleMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: UniColors.textPrimary,
                     ),
                   ),
                 ],
@@ -239,6 +284,22 @@ class StudentTimetableView extends StatelessWidget {
 
               return Column(
                 children: slots.map((slot) {
+                  final isEnrolled = controller.isStudentEnrolled(slot);
+                  final matchingRecheck = controller.pendingRechecks.firstWhereOrNull(
+                    (r) => r.isPending && (r.sessionId == slot.attendanceSessionId ||
+                           (slot.className != null && r.className.toLowerCase() == slot.className!.toLowerCase()))
+                  );
+                  final canCheckIn = matchingRecheck != null || slot.canCheckInNow(isEnrolled: isEnrolled);
+                  final buttonText = matchingRecheck != null
+                      ? 'Điểm danh lại'
+                      : slot.getAttendanceButtonText(isEnrolled: isEnrolled);
+                  final badgeStatus = matchingRecheck != null
+                      ? AttendanceStatus.pending
+                      : slot.getAttendanceBadgeStatus(isEnrolled: isEnrolled);
+                  final badgeLabel = matchingRecheck != null
+                      ? 'Yêu cầu điểm danh lại'
+                      : slot.getAttendanceBadgeLabel(isEnrolled: isEnrolled);
+
                   return Padding(
                     padding: const EdgeInsets.only(bottom: UniSpacing.spaceSm),
                     child: ClassSessionCard(
@@ -248,14 +309,13 @@ class StudentTimetableView extends StatelessWidget {
                       room: slot.roomDisplay,
                       lecturerName: slot.lecturerDisplay,
                       timeSlot: slot.timeSlot,
-                      status: slot.hasAttendanceSession
-                          ? AttendanceStatus.ongoing
-                          : AttendanceStatus.scheduled,
-                      actionButtonText: slot.hasAttendanceSession
-                          ? 'Điểm danh ngay'
-                          : null,
-                      onActionButtonTap: slot.hasAttendanceSession
-                          ? () => _showPhase05Advisory(context)
+                      status: badgeStatus,
+                      customStatusLabel: badgeLabel,
+                      actionButtonText: buttonText,
+                      onActionButtonTap: canCheckIn
+                          ? () => matchingRecheck != null
+                              ? controller.handleRecheckTap(context, matchingRecheck)
+                              : controller.handleCheckInTap(context, slot)
                           : null,
                     ),
                   );
@@ -266,79 +326,6 @@ class StudentTimetableView extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  void _showPhase05Advisory(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: UniColors.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.all(UniSpacing.spaceLg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: UniColors.border,
-                  borderRadius: UniSpacing.borderRadiusFull,
-                ),
-              ),
-              const SizedBox(height: UniSpacing.spaceMd),
-              Container(
-                width: 56,
-                height: 56,
-                decoration: const BoxDecoration(
-                  color: UniColors.primaryLight,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.qr_code_scanner_rounded,
-                  color: UniColors.primary,
-                  size: 30,
-                ),
-              ),
-              const SizedBox(height: UniSpacing.spaceSm),
-              Text(
-                'Điểm Danh Lớp Học',
-                style: UniTypography.titleMedium.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: UniSpacing.spaceSm),
-              Text(
-                'Chức năng quét mã QR & kiểm tra thực thể Face-ID sẽ được triển khai đầy đủ tại Phase 05.',
-                textAlign: TextAlign.center,
-                style: UniTypography.bodyMedium.copyWith(
-                  color: UniColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: UniSpacing.spaceLg),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: UniColors.primary,
-                    foregroundColor: UniColors.onPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: UniSpacing.borderRadiusMd,
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('Đã hiểu'),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

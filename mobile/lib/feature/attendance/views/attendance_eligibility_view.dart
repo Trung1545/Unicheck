@@ -37,6 +37,8 @@ class AttendanceEligibilityView extends StatelessWidget {
               // 2. Academic Protocol Banner
               _buildProtocolBanner(),
               const SizedBox(height: UniSpacing.spaceMd),
+              Obx(() => _buildRecheckAlertBanner(attendanceController)),
+              const SizedBox(height: UniSpacing.spaceMd),
 
               // 3. Class & Session Info Card
               _buildSessionInfoCard(attendanceController, authController),
@@ -253,6 +255,48 @@ class AttendanceEligibilityView extends StatelessWidget {
     );
   }
 
+  Widget _buildRecheckAlertBanner(AttendanceController controller) {
+    final recheck = controller.activeRecheckRequest.value;
+    if (recheck == null) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: UniSpacing.spaceMd),
+      padding: const EdgeInsets.all(UniSpacing.spaceMd),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: UniSpacing.borderRadiusMd,
+        border: Border.all(color: const Color(0xFFF97316), width: 1.5),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.sync_problem_rounded, color: Color(0xFFEA580C), size: 28),
+          const SizedBox(width: UniSpacing.spaceSm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ĐIỂM DANH LẠI THEO YÊU CẦU GIẢNG VIÊN',
+                  style: UniTypography.labelSmall.copyWith(
+                    color: const Color(0xFF9A3412),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Giảng viên ${recheck.requestedByName}: "${recheck.reason}"',
+                  style: UniTypography.bodySmall.copyWith(
+                    color: const Color(0xFF7C2D12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSessionInfoCard(
     AttendanceController attendanceController,
     AuthController authController,
@@ -311,26 +355,38 @@ class AttendanceEligibilityView extends StatelessWidget {
             const SizedBox(height: UniSpacing.spaceSm),
 
             // Metadata row
-            Row(
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 4,
               children: [
-                const Icon(Icons.meeting_room_outlined,
-                    size: 14, color: UniColors.textMuted),
-                const SizedBox(width: 4),
-                Text(
-                  slot?.roomDisplay ?? 'Phòng học',
-                  style: UniTypography.caption.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.meeting_room_outlined,
+                        size: 14, color: UniColors.textMuted),
+                    const SizedBox(width: 4),
+                    Text(
+                      slot?.roomDisplay ?? 'Phòng học',
+                      style: UniTypography.caption.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                const Icon(Icons.person_outline,
-                    size: 14, color: UniColors.textMuted),
-                const SizedBox(width: 4),
-                Text(
-                  slot?.lecturerDisplay ?? 'Giảng viên',
-                  style: UniTypography.caption.copyWith(
-                    color: UniColors.textSecondary,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.person_outline,
+                        size: 14, color: UniColors.textMuted),
+                    const SizedBox(width: 4),
+                    Text(
+                      slot?.lecturerDisplay ?? 'Giảng viên',
+                      style: UniTypography.caption.copyWith(
+                        color: UniColors.textSecondary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -485,7 +541,13 @@ class AttendanceEligibilityView extends StatelessWidget {
             description: controller.wifiNote.value,
             icon: Icons.wifi_rounded,
             status: controller.wifiStatus.value,
-            note: 'Lưu ý: Kết nối Wi-Fi chỉ đối soát phòng học, không thay thế xác thực sinh trắc học Face-ID.',
+            customStatusText: (controller.wifiSimulationAllowed.value &&
+                    controller.wifiStatus.value == VerificationStatus.pass)
+                ? 'Wi-Fi mô phỏng (Demo) – Đạt'
+                : null,
+            note: controller.wifiSimulationAllowed.value
+                ? 'Chế độ Wi-Fi mô phỏng (Demo) trên Android Emulator được máy chủ cấp phép.'
+                : 'Lưu ý: Kết nối Wi-Fi chỉ đối soát phòng học, không thay thế xác thực sinh trắc học Face-ID.',
             onRetry: () => controller.runEligibilityChecks(),
           ),
           const SizedBox(height: UniSpacing.spaceSm),

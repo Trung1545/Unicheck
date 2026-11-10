@@ -137,6 +137,26 @@ public class TimetableController {
     }
 
     /**
+     * 7b. Lấy danh sách phòng học khả dụng theo khoảng thời gian thực (Real-time Available Rooms)
+     */
+    @GetMapping("/available-rooms")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ApiResponse<List<RoomResponse>>> getAvailableRooms(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam Integer slotNumber,
+            @RequestParam(required = false) Integer endSlotNumber,
+            @RequestParam(required = false) String className,
+            @RequestParam(required = false) Boolean recurring,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recurringUntil,
+            @RequestParam(required = false) Long semesterId,
+            @RequestParam(required = false) Long excludeSlotId
+    ) {
+        List<RoomResponse> rooms = timetableService.getAvailableRooms(
+                date, slotNumber, endSlotNumber, className, recurring, recurringUntil, semesterId, excludeSlotId);
+        return ResponseEntity.ok(ApiResponse.ok(rooms, "Lấy danh sách phòng học khả dụng thành công"));
+    }
+
+    /**
      * 8. Lấy danh mục ca học / loại tiết (Slot Types)
      */
     @GetMapping("/slot-types")

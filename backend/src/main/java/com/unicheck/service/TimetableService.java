@@ -44,6 +44,17 @@ public interface TimetableService {
 
     TimetableConflictCheckResponse checkConflict(TimetableConflictCheckRequest request);
 
+    List<RoomResponse> getAvailableRooms(
+            LocalDate date,
+            Integer slotNumber,
+            Integer endSlotNumber,
+            String className,
+            Boolean recurring,
+            LocalDate recurringUntil,
+            Long semesterId,
+            Long excludeSlotId
+    );
+
     List<SlotTypeResponse> getSlotTypes(Long semesterId);
 
     TimetableStatsResponse getTimetableStats(Long semesterId, LocalDate weekStartDate);

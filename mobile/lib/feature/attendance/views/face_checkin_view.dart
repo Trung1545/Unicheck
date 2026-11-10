@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import '../../../core/constants/demo_biometrics.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
@@ -42,6 +44,7 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
 
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
+  CameraDescription? _selectedCamera;
   bool _isCameraInitialized = false;
   bool _isStreaming = false;
   bool _isProcessingFrame = false;
@@ -101,7 +104,22 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
     }
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _switchCamera() async {
+    if (_cameras.length <= 1 || _cameraController == null) return;
+    await _stopFrameStream();
+    await _cameraController?.dispose();
+    _cameraController = null;
+    if (mounted) {
+      setState(() {
+        _isCameraInitialized = false;
+      });
+    }
+    final currentIdx = _selectedCamera != null ? _cameras.indexOf(_selectedCamera!) : 0;
+    final nextCam = _cameras[(currentIdx + 1) % _cameras.length];
+    await _initializeCamera(specificCamera: nextCam);
+  }
+
+  Future<void> _initializeCamera({CameraDescription? specificCamera}) async {
     try {
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
@@ -114,13 +132,27 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
         return;
       }
 
-      final frontCam = _cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.front,
-        orElse: () => _cameras.first,
-      );
+      // Default to front camera or use specific camera
+      if (specificCamera != null) {
+        _selectedCamera = specificCamera;
+      } else {
+        final frontCamIndex = _cameras.indexWhere(
+          (c) => c.lensDirection == CameraLensDirection.front,
+        );
+        if (frontCamIndex != -1) {
+          _selectedCamera = _cameras[frontCamIndex];
+        } else {
+          _selectedCamera = _cameras.first;
+        }
+      }
+
+      final isFront = _selectedCamera!.lensDirection == CameraLensDirection.front;
+      final fallbackWarning = isFront
+          ? null
+          : 'Cảnh báo: Thiết bị không có camera trước. Đang dùng camera sau (${_selectedCamera!.name}). Vui lòng nhìn vào webcam máy tính.';
 
       _cameraController = CameraController(
-        frontCam,
+        _selectedCamera!,
         ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.nv21,
@@ -131,14 +163,14 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
 
       setState(() {
         _isCameraInitialized = true;
-        _warningMessage = null;
+        _warningMessage = fallbackWarning;
         _instructionTitle = 'Nhìn thẳng vào giữa khung oval';
         _instructionSubtitle = 'Giữ yên để hệ thống đối soát sinh trắc học';
         _scanStatus = BiometricScanStatus.scanning;
       });
 
       _debugLogger.logCameraInitialized(
-        lensDirection: frontCam.lensDirection,
+        lensDirection: _selectedCamera!.lensDirection,
         resolutionPreset: ResolutionPreset.medium,
         imageFormatGroup: ImageFormatGroup.nv21,
       );
@@ -493,11 +525,18 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
   }
 
   Future<void> _submitFinalCheckIn() async {
-    final faceBase64 =
-        _capturedFrontalBase64 ?? 'data:image/jpeg;base64,mock';
+    if (_capturedFrontalBase64 == null || _capturedFrontalBase64!.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _scanStatus = BiometricScanStatus.error;
+          _warningMessage = 'Chưa ghi nhận ảnh khuôn mặt hợp lệ';
+        });
+      }
+      return;
+    }
 
     final success = await attendanceController.submitAttendanceCheckin(
-      faceSampleBase64: faceBase64,
+      faceSampleBase64: _capturedFrontalBase64!,
       livenessPassed: true,
       livenessSteps: _verifiedLivenessSteps,
     );
@@ -511,7 +550,7 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
     }
   }
 
-  // Simulator helper for automated tests and desktop environments without camera
+  // Simulator helper for automated tests and emulator demo environments without physical camera
   void _simulateCheckinSuccess() async {
     setState(() {
       _livenessStep = 3;
@@ -521,7 +560,7 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
     });
 
     _verifiedLivenessSteps.addAll(['simulated_frontal', 'simulated_liveness']);
-    _capturedFrontalBase64 = 'data:image/jpeg;base64,simulated_checkin_frame';
+    _capturedFrontalBase64 = kDemoValidFaceBase64;
 
     await _submitFinalCheckIn();
   }
@@ -547,7 +586,13 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
         children: [
           // 1. Camera Viewport
           if (_isCameraInitialized && _cameraController != null)
-            CameraPreview(_cameraController!)
+            (_selectedCamera?.lensDirection == CameraLensDirection.front)
+                ? Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.rotationY(math.pi),
+                    child: CameraPreview(_cameraController!),
+                  )
+                : CameraPreview(_cameraController!)
           else
             Container(
               color: const Color(0xFF0F172A),
@@ -558,7 +603,7 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
                     CircularProgressIndicator(color: UniColors.laserCyan),
                     SizedBox(height: 16),
                     Text(
-                      'Đang bật Camera trước...',
+                      'Khởi động Camera FaceID...',
                       style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ],
@@ -619,7 +664,22 @@ class _FaceCheckinViewState extends State<FaceCheckinView>
                       ],
                     ),
                   ),
-                  const SizedBox(width: 40),
+                  CircleAvatar(
+                    backgroundColor: Colors.black54,
+                    child: _cameras.length > 1
+                        ? IconButton(
+                            icon: const Icon(Icons.flip_camera_ios_rounded, color: Colors.white, size: 20),
+                            onPressed: _switchCamera,
+                            tooltip: 'Đổi máy ảnh',
+                          )
+                        : Icon(
+                            _selectedCamera?.lensDirection == CameraLensDirection.front
+                                ? Icons.camera_front
+                                : Icons.camera_rear,
+                            color: Colors.white70,
+                            size: 18,
+                          ),
+                  ),
                 ],
               ),
             ),

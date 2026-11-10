@@ -1,8 +1,15 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/routes/app_routes.dart';
 import '../../../core/storage/token_storage.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_spacing.dart';
 import '../../../shared/widgets/weekly_day_picker_strip.dart';
+import '../../attendance/controllers/attendance_controller.dart';
+import '../../attendance/models/attendance_recheck_model.dart';
+import '../../attendance/services/attendance_api_service.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../models/enrollment_model.dart';
 import '../models/timetable_slot_model.dart';
@@ -10,9 +17,11 @@ import '../services/dashboard_api_service.dart';
 
 class DashboardController extends GetxController {
   final DashboardApiService apiService;
+  final AttendanceApiService attendanceApiService;
 
   final RxList<TimetableSlotModel> allSlots = <TimetableSlotModel>[].obs;
   final RxList<EnrollmentModel> enrollments = <EnrollmentModel>[].obs;
+  final RxList<AttendanceRecheckModel> pendingRechecks = <AttendanceRecheckModel>[].obs;
   final RxBool isLoading = false.obs;
   final RxString errorMessage = ''.obs;
 
@@ -25,8 +34,19 @@ class DashboardController extends GetxController {
 
   DashboardController({
     DashboardApiService? apiService,
-  }) : apiService = apiService ??
+    AttendanceApiService? attendanceApiService,
+  })  : apiService = apiService ??
             DashboardApiService(
+              apiClient: Get.isRegistered<ApiClient>()
+                  ? Get.find<ApiClient>()
+                  : ApiClient(
+                      tokenStorage: Get.isRegistered<TokenStorage>()
+                          ? Get.find<TokenStorage>()
+                          : PlatformTokenStorage(),
+                    ),
+            ),
+        attendanceApiService = attendanceApiService ??
+            AttendanceApiService(
               apiClient: Get.isRegistered<ApiClient>()
                   ? Get.find<ApiClient>()
                   : ApiClient(
@@ -63,7 +83,7 @@ class DashboardController extends GetxController {
       final authController = Get.isRegistered<AuthController>()
           ? Get.find<AuthController>()
           : null;
-      if (authController != null) {
+      if (authController != null && authController.user.value == null) {
         try {
           await authController.refreshProfile();
         } catch (_) {}
@@ -77,6 +97,16 @@ class DashboardController extends GetxController {
 
       allSlots.value = results[0] as List<TimetableSlotModel>;
       enrollments.value = results[1] as List<EnrollmentModel>;
+
+      // Tải các yêu cầu điểm danh lại đang chờ của sinh viên (Re-check requests)
+      try {
+        final rechecks = await attendanceApiService.getPendingRecheckRequests();
+        pendingRechecks.value = rechecks;
+      } catch (err) {
+        if (kDebugMode) {
+          print('Fetch pending rechecks error: $err');
+        }
+      }
     } catch (e) {
       if (kDebugMode) {
         print('DashboardController load error: $e');
@@ -85,6 +115,21 @@ class DashboardController extends GetxController {
     } finally {
       isLoading.value = false;
     }
+  }
+
+  /// Kiểm tra sinh viên có được ghi danh vào lớp học phần này hay không
+  bool isStudentEnrolled(TimetableSlotModel slot) {
+    if (enrollments.isEmpty) {
+      return true; // Fallback nếu dữ liệu enrollments chưa tải xong
+    }
+    return enrollments.any((e) {
+      final codeMatches =
+          e.courseCode.toLowerCase() == slot.courseCode.toLowerCase();
+      final classMatches = slot.className != null &&
+          e.className != null &&
+          e.className!.toLowerCase() == slot.className!.toLowerCase();
+      return (classMatches || codeMatches) && e.isActive;
+    });
   }
 
   // Filtered Slots for Today
@@ -129,10 +174,10 @@ class DashboardController extends GetxController {
     return tSlots.last;
   }
 
-  // Active Attendance Session (if any slot has attendance open)
+  // Active Attendance Session (chỉ trả về ca học đang diễn ra, sinh viên ghi danh và phiên điểm danh OPEN)
   TimetableSlotModel? get activeAttendanceSession {
     for (final slot in todaySlots) {
-      if (slot.hasAttendanceSession) {
+      if (slot.canCheckInNow(isEnrolled: isStudentEnrolled(slot))) {
         return slot;
       }
     }
@@ -228,5 +273,143 @@ class DashboardController extends GetxController {
     }
 
     return list;
+  }
+
+  /// Xử lý nhấn nút "Điểm danh ngay":
+  /// 1. Kiểm tra thời gian ca học
+  /// 2. Tra cứu trạng thái phiên điểm danh từ Backend (/attendance/sessions/{id}/status)
+  /// 3. Nếu hợp lệ, chọn ca và chuyển hướng trực tiếp sang QrScannerView
+  /// 4. Nếu đã đóng / hết hạn: thông báo lỗi và làm mới danh sách
+  Future<void> handleCheckInTap(
+      BuildContext context, TimetableSlotModel slot) async {
+    // Kiểm tra thời gian ca học
+    if (slot.getTimeState() == SlotTimeState.ended) {
+      Get.snackbar(
+        'Ca học đã kết thúc',
+        'Ca học này đã kết thúc thời gian học theo quy định.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: UniColors.error.withValues(alpha: 0.9),
+        colorText: Colors.white,
+        margin: const EdgeInsets.all(UniSpacing.spaceMd),
+      );
+      await loadDashboardData();
+      return;
+    }
+
+    // Kiểm tra sinh viên đã điểm danh hay chưa
+    if (slot.studentAttendanceStatus == 'PRESENT' ||
+        slot.studentAttendanceStatus == 'LATE') {
+      Get.snackbar(
+        'Đã điểm danh',
+        'Bạn đã hoàn tất điểm danh cho ca học này.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: UniColors.success.withValues(alpha: 0.9),
+        colorText: Colors.white,
+        margin: const EdgeInsets.all(UniSpacing.spaceMd),
+      );
+      return;
+    }
+
+    // Kiểm tra trạng thái phiên điểm danh từ Backend
+    final sessionId = slot.attendanceSessionId;
+    if (sessionId != null) {
+      try {
+        final statusRes = await attendanceApiService.getSessionStatus(sessionId);
+        final isOpen =
+            statusRes['isOpen'] == true || statusRes['status'] == 'OPEN';
+        if (!isOpen) {
+          Get.snackbar(
+            'Phiên điểm danh đã đóng',
+            'Giảng viên đã kết thúc phiên điểm danh cho ca học này.',
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: UniColors.error.withValues(alpha: 0.9),
+            colorText: Colors.white,
+            margin: const EdgeInsets.all(UniSpacing.spaceMd),
+            duration: const Duration(seconds: 4),
+          );
+          await loadDashboardData();
+          return;
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('Lỗi kiểm tra trạng thái phiên: $e');
+        }
+      }
+    } else if (!slot.hasAttendanceSession) {
+      Get.snackbar(
+        'Chưa mở điểm danh',
+        'Giảng viên chưa mở phiên điểm danh cho ca học này.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: UniColors.warning.withValues(alpha: 0.9),
+        colorText: Colors.white,
+        margin: const EdgeInsets.all(UniSpacing.spaceMd),
+      );
+      return;
+    }
+
+    // Thiết lập ca học đang chọn và điều hướng sang QR Scanner
+    final attendanceController = Get.isRegistered<AttendanceController>()
+        ? Get.find<AttendanceController>()
+        : Get.put(AttendanceController());
+    attendanceController.setActiveRecheckRequest(null);
+    attendanceController.selectSession(slot);
+
+    Get.toNamed(
+      AppRoutes.qrScanner,
+      arguments: {
+        'attendanceSessionId': slot.attendanceSessionId,
+        'classSectionId': slot.className,
+        'scheduleId': slot.id,
+        'slot': slot,
+      },
+    );
+  }
+
+  /// Xử lý sinh viên nhấn nút "Điểm danh lại" từ thông báo yêu cầu của Giảng viên (Recheck)
+  Future<void> handleRecheckTap(
+      BuildContext context, AttendanceRecheckModel recheck) async {
+    if (recheck.isExpired) {
+      Get.snackbar(
+        'Yêu cầu đã hết hạn',
+        'Thời gian thực hiện điểm danh lại do giảng viên yêu cầu đã kết thúc.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: UniColors.error.withValues(alpha: 0.9),
+        colorText: Colors.white,
+        margin: const EdgeInsets.all(UniSpacing.spaceMd),
+      );
+      await loadDashboardData();
+      return;
+    }
+
+    final attendanceController = Get.isRegistered<AttendanceController>()
+        ? Get.find<AttendanceController>()
+        : Get.put(AttendanceController());
+
+    attendanceController.setActiveRecheckRequest(recheck);
+
+    TimetableSlotModel? matchingSlot;
+    if (recheck.sessionId != null) {
+      matchingSlot = allSlots.firstWhereOrNull(
+          (s) => s.attendanceSessionId == recheck.sessionId);
+    }
+    if (matchingSlot == null && recheck.className.isNotEmpty) {
+      matchingSlot = allSlots.firstWhereOrNull((s) =>
+          s.className?.toLowerCase() == recheck.className.toLowerCase());
+    }
+
+    if (matchingSlot != null) {
+      attendanceController.selectSession(matchingSlot);
+    }
+
+    Get.toNamed(
+      AppRoutes.qrScanner,
+      arguments: {
+        'attendanceSessionId': recheck.sessionId,
+        'classSectionId': recheck.className,
+        'recheckRequestId': recheck.requestId,
+        'recheck': recheck,
+        'slot': matchingSlot,
+      },
+    );
   }
 }

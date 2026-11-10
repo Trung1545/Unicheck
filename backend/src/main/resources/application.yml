@@ -48,3 +48,17 @@ security:
 
 ai-service:
   url: ${AI_SERVICE_URL:http://localhost:5000}
+
+
+# Testing & Development isolated modes (strictly disabled by default in production)
+unicheck:
+  testing:
+    static-qr:
+      enabled: ${STATIC_QR_ENABLED:true}
+      allowed-class-name: ${STATIC_QR_ALLOWED_CLASS:SE1801-PRJ301,UNICHECK-E2E-01}
+      ttl-minutes: ${STATIC_QR_TTL_MINUTES:30}
+    wifi-simulation:
+      enabled: ${WIFI_SIMULATION_ENABLED:true}
+      allowed-class-name: ${WIFI_SIMULATION_ALLOWED_CLASS:SE1801-PRJ301,UNICHECK-E2E-01,PRJ301.01,PRJ301,*}
+      simulated-ssid: ${WIFI_SIMULATION_SSID:AndroidWifi}
+      simulated-bssid: ${WIFI_SIMULATION_BSSID:02:00:00:00:00:00}

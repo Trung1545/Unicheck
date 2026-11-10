@@ -35,8 +35,8 @@ class FaceEnrollmentResultView extends StatelessWidget {
         (Get.arguments is FaceEnrollmentResultModel
             ? Get.arguments as FaceEnrollmentResultModel
             : const FaceEnrollmentResultModel(
-                success: true,
-                status: 'REGISTERED',
+                success: false,
+                status: 'ERROR',
                 version: 'v3.2',
                 modelName: 'ArcFace MobileFaceNet (512-dim)',
                 embeddingDimension: 512,
@@ -52,14 +52,14 @@ class FaceEnrollmentResultView extends StatelessWidget {
 
     final certId = model.tokenHash.isNotEmpty
         ? '#FID-${model.tokenHash.substring(0, model.tokenHash.length > 8 ? 8 : model.tokenHash.length).toUpperCase()}-$studentCode'
-        : '#FID-20261020-$studentCode-VN';
+        : 'N/A';
 
     final sha256Hash = model.tokenHash.isNotEmpty
         ? model.tokenHash
-        : 'e8f9c18d40a87f12e09b11933df01c7784a9235e8932b12fa9080c3b2190';
+        : 'N/A';
 
-    final now = model.registeredAt ?? DateTime.now();
-    final dateStr =
+    final now = model.registeredAt;
+    final dateStr = now == null ? 'N/A' :
         '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} - ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
 
     return Scaffold(

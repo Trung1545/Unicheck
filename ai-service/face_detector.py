@@ -75,7 +75,9 @@ class FaceTooSmallError(FaceDetectionError):
 def decode_image_base64(base64_str: str) -> np.ndarray:
     """Safely decodes a base64 encoded image string into an OpenCV BGR numpy array.
 
-    Handles optional Data URL prefix (e.g. data:image/jpeg;base64,...).
+    Handles optional Data URL prefix, cleans whitespace/newlines, fixes padding,
+    and applies PIL ImageOps.exif_transpose so that portrait/landscape images
+    with EXIF orientation tags (e.g. from Android CameraX/Camera2) are transposed upright.
     """
     if not base64_str or not isinstance(base64_str, str):
         raise InvalidImageError("Dữ liệu ảnh base64 rỗng hoặc không đúng định dạng")
@@ -83,6 +85,14 @@ def decode_image_base64(base64_str: str) -> np.ndarray:
     # Strip Data URL header if present
     if "," in base64_str:
         base64_str = base64_str.split(",", 1)[1]
+
+    # Clean whitespace, newlines, tabs
+    base64_str = "".join(base64_str.split())
+
+    # Fix base64 padding if missing
+    missing_padding = len(base64_str) % 4
+    if missing_padding:
+        base64_str += "=" * (4 - missing_padding)
 
     # Validate size before decoding
     raw_len = len(base64_str)
@@ -102,8 +112,21 @@ def decode_image_base64(base64_str: str) -> np.ndarray:
     if not image_bytes:
         raise InvalidImageError("Dữ liệu nhị phân sau giải mã rỗng")
 
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    # Use PIL with ImageOps.exif_transpose to automatically orient image upright
+    image = None
+    try:
+        import io
+        from PIL import Image, ImageOps
+
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        pil_img = ImageOps.exif_transpose(pil_img)
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    except Exception as pil_err:
+        logger.warning("PIL exif_transpose decode failed: %s. Falling back to cv2.imdecode", pil_err)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
     if image is None or image.size == 0:
         raise InvalidImageError("Không thể đọc định dạng ảnh (chỉ hỗ trợ JPEG/PNG)")
@@ -206,7 +229,10 @@ class FaceDetector:
         return detected
 
     def detect_single_face(self, image: np.ndarray) -> dict:
-        """Enforces single-face policy.
+        """Enforces single-face policy with auto-orientation recovery.
+
+        If no face is detected in the default orientation (e.g. unflagged sensor rotation),
+        attempts candidate rotations (90° CW, 90° CCW, 180°) to align the face upright.
 
         Raises:
             NoFaceDetectedError: if 0 faces found
@@ -214,6 +240,18 @@ class FaceDetector:
             FaceTooSmallError: if face bounding box is below min size
         """
         faces = self.detect_faces(image)
+        upright_image = image
+
+        if len(faces) == 0:
+            for rot in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180):
+                candidate = cv2.rotate(image, rot)
+                cand_faces = self.detect_faces(candidate)
+                if len(cand_faces) > 0:
+                    faces = cand_faces
+                    upright_image = candidate
+                    logger.info("Face detected after auto-orientation rotation (%s)", rot)
+                    break
+
         count = len(faces)
 
         if count == 0:
@@ -226,4 +264,5 @@ class FaceDetector:
         if bbox["width"] < config.MIN_FACE_WIDTH or bbox["height"] < config.MIN_FACE_HEIGHT:
             raise FaceTooSmallError()
 
+        face["image"] = upright_image
         return face

@@ -12,6 +12,7 @@ enum AttendanceStatus {
   pending, // Chờ điểm danh / Đang diễn ra
   ongoing, // Đang diễn ra
   scheduled, // Sắp tới
+  ended, // Đã kết thúc
 }
 
 /// UniCheck Standard Academic Attendance Status Badge
@@ -141,6 +142,14 @@ class AttendanceStatusBadge extends StatelessWidget {
       case AttendanceStatus.scheduled:
         return const _StatusBadgeStyle(
           label: 'Sắp tới',
+          dotColor: UniColors.textMuted,
+          textColor: UniColors.textSecondary,
+          backgroundColor: Color(0xFFF1F5F9),
+          borderColor: UniColors.border,
+        );
+      case AttendanceStatus.ended:
+        return const _StatusBadgeStyle(
+          label: 'Đã kết thúc',
           dotColor: UniColors.textMuted,
           textColor: UniColors.textSecondary,
           backgroundColor: Color(0xFFF1F5F9),

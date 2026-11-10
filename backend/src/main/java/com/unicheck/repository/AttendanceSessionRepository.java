@@ -67,6 +67,20 @@ public interface AttendanceSessionRepository extends JpaRepository<AttendanceSes
     );
 
     /**
+     * Nguyên tử mở phiên có kèm cập nhật thời gian xoay vòng QR động (qrRotationIntervalSeconds)
+     */
+    @Modifying
+    @Query("UPDATE AttendanceSession s SET s.status = :targetStatus, s.openedAt = :openedAt, s.qrRotationIntervalSeconds = :interval " +
+           "WHERE s.id = :id AND s.status = :expectedStatus")
+    int openSessionAtomicWithInterval(
+            @Param("id") Long id,
+            @Param("openedAt") LocalDateTime openedAt,
+            @Param("targetStatus") AttendanceSessionStatus targetStatus,
+            @Param("expectedStatus") AttendanceSessionStatus expectedStatus,
+            @Param("interval") Integer interval
+    );
+
+    /**
      * Nguyên tử đóng phiên: Chuyển trạng thái từ expectedStatus sang targetStatus và ghi nhận thời gian đóng
      */
     @Modifying

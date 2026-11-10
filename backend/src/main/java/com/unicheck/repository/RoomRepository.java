@@ -2,8 +2,10 @@ package com.unicheck.repository;
 
 import com.unicheck.model.entity.Room;
 import com.unicheck.model.enums.RoomStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -36,4 +38,11 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
 
     @Query(value = "SELECT COUNT(DISTINCT room_id) FROM room_wifi_access_points", nativeQuery = true)
     long countRoomsWithWifi();
+
+    /**
+     * Pessimistic write lock for preventing race condition / concurrent room booking collisions.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Room r WHERE r.id = :id")
+    Optional<Room> findByIdForUpdate(@Param("id") Long id);
 }

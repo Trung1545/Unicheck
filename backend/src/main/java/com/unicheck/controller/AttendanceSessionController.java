@@ -86,10 +86,26 @@ public class AttendanceSessionController {
     public ResponseEntity<ApiResponse<AttendanceSessionResponse>> openSession(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable Long id,
+            @Valid @RequestBody(required = false) AttendanceSessionOpenRequest openRequest,
             HttpServletRequest httpRequest
     ) {
-        AttendanceSessionResponse response = attendanceSessionService.openSession(principal, id, httpRequest);
+        AttendanceSessionResponse response = attendanceSessionService.openSession(principal, id, openRequest, httpRequest);
         return ResponseEntity.ok(ApiResponse.ok(response, "Mở phiên điểm danh thành công"));
+    }
+
+    /**
+     * 4b. Cập nhật thời gian xoay vòng mã QR cho phiên điểm danh
+     */
+    @PutMapping("/sessions/{id}/qr-interval")
+    @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
+    public ResponseEntity<ApiResponse<AttendanceSessionResponse>> updateQrInterval(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id,
+            @Valid @RequestBody AttendanceSessionOpenRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        AttendanceSessionResponse response = attendanceSessionService.updateQrInterval(principal, id, request, httpRequest);
+        return ResponseEntity.ok(ApiResponse.ok(response, "Cập nhật thời gian thay đổi mã QR thành công"));
     }
 
     /**
@@ -187,5 +203,92 @@ public class AttendanceSessionController {
     ) {
         StudentAttendanceResponse response = attendanceSessionService.checkInStudent(principal, request, httpRequest);
         return ResponseEntity.ok(ApiResponse.ok(response, "Điểm danh thành công"));
+    }
+
+    /**
+     * 12. Lấy toàn bộ danh sách sinh viên ghi danh trong phiên kèm trạng thái điểm danh và recheck
+     */
+    @GetMapping("/sessions/{id}/students")
+    @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
+    public ResponseEntity<ApiResponse<List<SessionStudentAttendanceDto>>> getSessionStudents(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id
+    ) {
+        List<SessionStudentAttendanceDto> list = attendanceSessionService.getSessionStudents(principal, id);
+        return ResponseEntity.ok(ApiResponse.ok(list, "Lấy danh sách sinh viên của phiên thành công"));
+    }
+
+    /**
+     * 13. Giảng viên điều chỉnh thủ công trạng thái điểm danh của sinh viên
+     */
+    @RequestMapping(value = {"/sessions/{sessionId}/students/{studentId}", "/sessions/{sessionId}/students/{studentId}/adjust"},
+            method = {RequestMethod.PATCH, RequestMethod.POST, RequestMethod.PUT})
+    @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
+    public ResponseEntity<ApiResponse<StudentAttendanceResponse>> adjustStudentAttendance(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long sessionId,
+            @PathVariable Long studentId,
+            @Valid @RequestBody AttendanceManualAdjustRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        StudentAttendanceResponse response = attendanceSessionService.adjustStudentAttendance(
+                principal, sessionId, studentId, request, httpRequest);
+        return ResponseEntity.ok(ApiResponse.ok(response, "Điều chỉnh trạng thái điểm danh thành công"));
+    }
+
+    /**
+     * 14. Giảng viên tạo yêu cầu điểm danh lại (Recheck Request)
+     */
+    @PostMapping("/sessions/{sessionId}/students/{studentId}/recheck")
+    @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
+    public ResponseEntity<ApiResponse<AttendanceRecheckResponse>> createRecheckRequest(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long sessionId,
+            @PathVariable Long studentId,
+            @Valid @RequestBody AttendanceRecheckCreateRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        AttendanceRecheckResponse response = attendanceSessionService.createRecheckRequest(
+                principal, sessionId, studentId, request, httpRequest);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(response, "Tạo yêu cầu điểm danh lại thành công"));
+    }
+
+    /**
+     * 15. Lấy lịch sử điều chỉnh điểm danh và recheck của phiên
+     */
+    @GetMapping("/sessions/{id}/history")
+    @PreAuthorize("hasAnyRole('ADMIN', 'LECTURER')")
+    public ResponseEntity<ApiResponse<List<AttendanceHistoryRecordDto>>> getSessionAdjustmentHistory(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id
+    ) {
+        List<AttendanceHistoryRecordDto> history = attendanceSessionService.getSessionAdjustmentHistory(principal, id);
+        return ResponseEntity.ok(ApiResponse.ok(history, "Lấy lịch sử điều chỉnh phiên điểm danh thành công"));
+    }
+
+    /**
+     * 16. Sinh viên lấy danh sách yêu cầu điểm danh lại đang chờ thực hiện (PENDING)
+     */
+    @GetMapping("/recheck-requests/pending")
+    @PreAuthorize("hasAnyRole('STUDENT', 'ADMIN')")
+    public ResponseEntity<ApiResponse<List<AttendanceRecheckResponse>>> getPendingRecheckRequests(
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        List<AttendanceRecheckResponse> pending = attendanceSessionService.getPendingRecheckRequestsForStudent(principal);
+        return ResponseEntity.ok(ApiResponse.ok(pending, "Lấy danh sách yêu cầu điểm danh lại đang chờ thành công"));
+    }
+
+    /**
+     * 17. Lấy chi tiết một yêu cầu điểm danh lại
+     */
+    @GetMapping("/recheck-requests/{id}")
+    @PreAuthorize("hasAnyRole('STUDENT', 'LECTURER', 'ADMIN')")
+    public ResponseEntity<ApiResponse<AttendanceRecheckResponse>> getRecheckRequestDetails(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id
+    ) {
+        AttendanceRecheckResponse details = attendanceSessionService.getRecheckRequestDetails(principal, id);
+        return ResponseEntity.ok(ApiResponse.ok(details, "Lấy thông tin yêu cầu điểm danh lại thành công"));
     }
 }

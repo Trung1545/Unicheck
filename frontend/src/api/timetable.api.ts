@@ -13,6 +13,8 @@ import {
   TimetableSlotQueryParams,
   TimetableConflictCheckRequest,
   TimetableConflictCheckResponse,
+  AvailableRoomsQueryParams,
+  RoomResponse,
   SlotTypeResponse,
   TimetableStatsResponse,
 } from '../types/api';
@@ -99,6 +101,27 @@ export const checkConflictApi = async (
   request: TimetableConflictCheckRequest
 ): Promise<ApiResponse<TimetableConflictCheckResponse>> => {
   return apiClient.post('/timetable/conflicts/check', request);
+};
+
+/**
+ * 7b. Lấy danh sách phòng học còn trống / khả dụng theo thời gian thực (Real-time Available Rooms)
+ */
+export const getAvailableRoomsApi = async (
+  params: AvailableRoomsQueryParams
+): Promise<ApiResponse<RoomResponse[]>> => {
+  const queryParams: Record<string, any> = {
+    date: params.date,
+    slotNumber: params.slotNumber,
+  };
+
+  if (params.endSlotNumber !== undefined && params.endSlotNumber !== null) queryParams.endSlotNumber = params.endSlotNumber;
+  if (params.className) queryParams.className = params.className.trim();
+  if (params.recurring !== undefined && params.recurring !== null) queryParams.recurring = params.recurring;
+  if (params.recurringUntil) queryParams.recurringUntil = params.recurringUntil;
+  if (params.semesterId) queryParams.semesterId = params.semesterId;
+  if (params.excludeSlotId !== undefined && params.excludeSlotId !== null) queryParams.excludeSlotId = params.excludeSlotId;
+
+  return apiClient.get('/timetable/available-rooms', { params: queryParams });
 };
 
 /**

@@ -20,10 +20,14 @@ import 'package:unicheck_mobile/feature/dashboard/models/timetable_slot_model.da
 class MockAttendanceApiService extends AttendanceApiService {
   final bool shouldCheckinFail;
   final String? failMessage;
+  final String? failErrorCode;
+  final AttendanceCheckinResponseModel? customCheckinResponse;
 
   MockAttendanceApiService({
     this.shouldCheckinFail = false,
     this.failMessage,
+    this.failErrorCode,
+    this.customCheckinResponse,
   }) : super(
           apiClient: ApiClient(
             tokenStorage: PlatformTokenStorage(),
@@ -77,8 +81,13 @@ class MockAttendanceApiService extends AttendanceApiService {
       throw ApiException(
         message: failMessage ??
             'Máy chủ học vụ chưa mở cổng tiếp nhận điểm danh trực tuyến (TASK-06 Blocker: HTTP 404).',
-        statusCode: 404,
+        errorCode: failErrorCode,
+        statusCode: failErrorCode != null ? 400 : 404,
       );
+    }
+
+    if (customCheckinResponse != null) {
+      return customCheckinResponse!;
     }
 
     return AttendanceCheckinResponseModel(
@@ -235,6 +244,77 @@ void main() {
       expect(result, isFalse);
       expect(controller.diagnosticCode.value, 'ERR_BACKEND_TASK_06_CHECKIN_UNAVAILABLE');
       expect(controller.diagnosticReason.value, contains('TASK-06 Blocker'));
+    });
+
+    test(
+        'submitAttendanceCheckin captures backend ERR_3004 (Face not matched) and sets diagnosticCode',
+        () async {
+      final mockService = MockAttendanceApiService(
+        shouldCheckinFail: true,
+        failMessage: 'Khuôn mặt không khớp với hồ sơ đã đăng ký',
+        failErrorCode: 'ERR_3004',
+      );
+      final controller = AttendanceController(apiService: mockService);
+
+      controller.currentSession.value = const TimetableSlotModel(
+        id: 42,
+        courseCode: 'CS101',
+        courseName: 'Cơ sở lập trình',
+      );
+      controller.qrPayload.value = QrPayloadModel.parse('UNICHECK:42:A2-101');
+
+      final result = await controller.submitAttendanceCheckin(
+        faceSampleBase64: 'data:image/jpeg;base64,sample',
+        livenessPassed: true,
+      );
+
+      expect(result, isFalse);
+      expect(controller.diagnosticCode.value, 'ERR_3004');
+      expect(controller.diagnosticReason.value, contains('Khuôn mặt không khớp'));
+    });
+
+    test(
+        'submitAttendanceCheckin fails when server returns invalid non-PRESENT/LATE status',
+        () async {
+      final mockService = MockAttendanceApiService(
+        customCheckinResponse: const AttendanceCheckinResponseModel(
+          status: 'ABSENT',
+          receiptId: '#ATT-20261020-CS101-1',
+        ),
+      );
+      final controller = AttendanceController(apiService: mockService);
+      controller.currentSession.value = const TimetableSlotModel(id: 42, courseCode: 'CS101', courseName: 'Cơ sở lập trình');
+      controller.qrPayload.value = QrPayloadModel.parse('UNICHECK:42:A2-101');
+
+      final result = await controller.submitAttendanceCheckin(
+        faceSampleBase64: 'data:image/jpeg;base64,sample',
+        livenessPassed: true,
+      );
+
+      expect(result, isFalse);
+      expect(controller.diagnosticCode.value, 'ERR_CHECKIN_STATUS_INVALID');
+    });
+
+    test(
+        'submitAttendanceCheckin fails when server receiptId is missing or empty',
+        () async {
+      final mockService = MockAttendanceApiService(
+        customCheckinResponse: const AttendanceCheckinResponseModel(
+          status: 'PRESENT',
+          receiptId: null,
+        ),
+      );
+      final controller = AttendanceController(apiService: mockService);
+      controller.currentSession.value = const TimetableSlotModel(id: 42, courseCode: 'CS101', courseName: 'Cơ sở lập trình');
+      controller.qrPayload.value = QrPayloadModel.parse('UNICHECK:42:A2-101');
+
+      final result = await controller.submitAttendanceCheckin(
+        faceSampleBase64: 'data:image/jpeg;base64,sample',
+        livenessPassed: true,
+      );
+
+      expect(result, isFalse);
+      expect(controller.diagnosticCode.value, 'ERR_NO_RECEIPT');
     });
   });
 

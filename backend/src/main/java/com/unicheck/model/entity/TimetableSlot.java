@@ -6,6 +6,7 @@ import lombok.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 @Entity
 @Table(
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
         @Index(name = "idx_timetable_slots_class_name", columnList = "class_name"),
         @Index(name = "idx_timetable_slots_date", columnList = "date"),
         @Index(name = "idx_timetable_slots_room_date_slot", columnList = "room_id, date, slot_number"),
+        @Index(name = "idx_timetable_slots_room_date_time", columnList = "room_id, date, start_time, end_time"),
         @Index(name = "idx_timetable_slots_status", columnList = "status"),
         @Index(name = "idx_timetable_slots_slot_type_id", columnList = "slot_type_id")
     }
@@ -49,6 +51,15 @@ public class TimetableSlot {
 
     @Column(name = "slot_number", nullable = false)
     private Integer slotNumber;
+
+    @Column(name = "end_slot_number")
+    private Integer endSlotNumber;
+
+    @Column(name = "start_time")
+    private LocalTime startTime;
+
+    @Column(name = "end_time")
+    private LocalTime endTime;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)

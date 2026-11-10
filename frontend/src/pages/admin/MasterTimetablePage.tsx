@@ -17,6 +17,7 @@ import {
   Edit,
   Trash2,
   AlertTriangle,
+  Loader2,
   CheckCircle2,
   Download,
   Upload,
@@ -45,6 +46,7 @@ import {
   updateTimetableSlotApi,
   deleteTimetableSlotApi,
   checkConflictApi,
+  getAvailableRoomsApi,
   getSlotTypesApi,
   getTimetableStatsApi,
   publishTimetableApi,
@@ -156,6 +158,11 @@ export const MasterTimetablePage: React.FC = () => {
   const [formEndPeriod, setFormEndPeriod] = useState<number>(3);
   const [formNote, setFormNote] = useState<string>('');
   const [formRecurring, setFormRecurring] = useState<boolean>(false);
+
+  // Real-time Available Rooms Filtering State
+  const [availableRooms, setAvailableRooms] = useState<RoomResponse[]>([]);
+  const [isLoadingAvailableRooms, setIsLoadingAvailableRooms] = useState<boolean>(false);
+  const [availableRoomsError, setAvailableRoomsError] = useState<string | null>(null);
 
   // Live Conflict Check Alert Box in Modal
   const [liveConflict, setLiveConflict] = useState<TimetableConflictCheckResponse | null>(null);
@@ -365,7 +372,7 @@ export const MasterTimetablePage: React.FC = () => {
 
       setFormStartPeriod(startP || 1);
       setFormEndPeriod(endP || 3);
-      setFormRoomId(rooms.length > 0 ? rooms[0].id : null);
+      setFormRoomId(null);
       setFormLecturerId(null);
       setFormNote('');
       setFormRecurring(false);
@@ -378,6 +385,8 @@ export const MasterTimetablePage: React.FC = () => {
     setIsSlotModalOpen(false);
     setLiveConflict(null);
     setEditingSlotId(null);
+    setAvailableRooms([]);
+    setAvailableRoomsError(null);
   };
 
   // Live real-time conflict checking when modal values change
@@ -413,6 +422,78 @@ export const MasterTimetablePage: React.FC = () => {
     return () => clearTimeout(timer);
   }, [isSlotModalOpen, formClassName, formLecturerId, formRoomId, formDate, formStartPeriod, formEndPeriod, editingSlotId]);
 
+  // Real-time available rooms checking when modal date/period/recurrence/class values change
+  useEffect(() => {
+    if (!isSlotModalOpen || !formDate || !formStartPeriod) {
+      setAvailableRooms([]);
+      setIsLoadingAvailableRooms(false);
+      setAvailableRoomsError(null);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingAvailableRooms(true);
+    setAvailableRoomsError(null);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await getAvailableRoomsApi({
+          date: formDate,
+          slotNumber: formStartPeriod,
+          endSlotNumber: formEndPeriod,
+          className: formClassName || undefined,
+          recurring: formRecurring,
+          semesterId: selectedSemesterId || undefined,
+          excludeSlotId: editingSlotId || undefined,
+        });
+
+        if (isMounted) {
+          if (res.success && Array.isArray(res.data)) {
+            const fetchedRooms = res.data;
+            setAvailableRooms(fetchedRooms);
+
+            // If current formRoomId is no longer available, deselect it
+            setFormRoomId((prevRoomId) => {
+              if (prevRoomId && !fetchedRooms.some((r) => r.id === prevRoomId)) {
+                return null;
+              }
+              return prevRoomId;
+            });
+          } else {
+            setAvailableRooms([]);
+            setAvailableRoomsError(res.message || 'Không thể lấy danh sách phòng khả dụng');
+            setFormRoomId(null);
+          }
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          console.error('Error fetching available rooms:', err);
+          setAvailableRooms([]);
+          setAvailableRoomsError('Lỗi kết nối máy chủ khi kiểm tra phòng trống');
+          setFormRoomId(null);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingAvailableRooms(false);
+        }
+      }
+    }, 200);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [
+    isSlotModalOpen,
+    formDate,
+    formStartPeriod,
+    formEndPeriod,
+    formRecurring,
+    formClassName,
+    selectedSemesterId,
+    editingSlotId,
+  ]);
+
   // Save / Update Slot
   const handleSaveSlot = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -423,6 +504,10 @@ export const MasterTimetablePage: React.FC = () => {
     }
     if (!formDate) {
       showToast('Lỗi nhập liệu', 'Vui lòng chọn ngày học', 'error');
+      return;
+    }
+    if (!formRoomId) {
+      showToast('Lỗi nhập liệu', 'Vui lòng chọn phòng học khả dụng cho lớp học', 'error');
       return;
     }
 
@@ -1404,21 +1489,84 @@ export const MasterTimetablePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1">
-                    Phòng học / Giảng đường <span className="text-red-500">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-700 font-bold">
+                      Phòng học / Giảng đường <span className="text-red-500">*</span>
+                    </label>
+                    {isLoadingAvailableRooms ? (
+                      <span className="text-xs text-blue-600 flex items-center gap-1 font-medium">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Đang kiểm tra phòng...
+                      </span>
+                    ) : availableRoomsError ? (
+                      <span className="text-xs text-red-600 font-medium">
+                        Lỗi kết nối phòng
+                      </span>
+                    ) : (!formDate || !formStartPeriod) ? (
+                      <span className="text-xs text-amber-600 font-medium">
+                        Vui lòng chọn thời gian
+                      </span>
+                    ) : availableRooms.length > 0 ? (
+                      <span className="text-xs text-emerald-600 font-semibold">
+                        {availableRooms.length} phòng khả dụng
+                      </span>
+                    ) : (
+                      <span className="text-xs text-rose-600 font-semibold">
+                        Hết phòng trống
+                      </span>
+                    )}
+                  </div>
+
                   <select
                     value={formRoomId || ''}
                     onChange={(e) => setFormRoomId(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full h-10 px-3 rounded-lg bg-white border border-slate-300 text-slate-800 outline-none focus:border-blue-700 transition"
+                    disabled={!formDate || !formStartPeriod || isLoadingAvailableRooms || Boolean(availableRoomsError) || availableRooms.length === 0}
+                    className={`w-full h-10 px-3 rounded-lg bg-white border text-slate-800 outline-none focus:border-blue-700 transition disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed ${
+                      availableRoomsError
+                        ? 'border-red-400 bg-red-50/50'
+                        : (!formDate || !formStartPeriod)
+                        ? 'border-slate-300'
+                        : availableRooms.length === 0 && !isLoadingAvailableRooms
+                        ? 'border-amber-400 bg-amber-50/30'
+                        : formRoomId
+                        ? 'border-emerald-500 bg-emerald-50/20'
+                        : 'border-slate-300'
+                    }`}
                   >
-                    <option value="">Chưa chọn phòng</option>
-                    {rooms.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        P. {r.code} ({r.name} - Sức chứa: {r.capacity})
-                      </option>
-                    ))}
+                    {!formDate || !formStartPeriod ? (
+                      <option value="">-- Vui lòng chọn ngày và tiết học trước --</option>
+                    ) : isLoadingAvailableRooms ? (
+                      <option value="">-- Đang kiểm tra phòng trống trong khung giờ... --</option>
+                    ) : availableRoomsError ? (
+                      <option value="">-- {availableRoomsError} --</option>
+                    ) : availableRooms.length === 0 ? (
+                      <option value="">-- Không có phòng học trống trong khung giờ này --</option>
+                    ) : (
+                      <>
+                        <option value="">-- Chọn phòng học ({availableRooms.length} phòng khả dụng) --</option>
+                        {availableRooms.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            P. {r.code} ({r.name} - Sức chứa: {r.capacity}{r.type ? ` - ${r.type}` : ''})
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
+
+                  {!isLoadingAvailableRooms && availableRooms.length === 0 && formDate && formStartPeriod && !availableRoomsError && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <span>
+                        Không có phòng học trống trong khung giờ này{formRecurring ? ' (bao gồm các tuần lặp lại)' : ''}. Vui lòng đổi ca học, tiết học hoặc ngày học khác.
+                      </span>
+                    </div>
+                  )}
+
+                  {availableRoomsError && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>{availableRoomsError}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1577,7 +1725,7 @@ export const MasterTimetablePage: React.FC = () => {
 
                   <button
                     type="submit"
-                    disabled={isCheckingConflict || Boolean(liveConflict)}
+                    disabled={isCheckingConflict || Boolean(liveConflict) || isLoadingAvailableRooms || !formRoomId || availableRooms.length === 0}
                     className="h-10 px-5 rounded-lg bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white font-bold shadow-md shadow-blue-700/20 flex items-center gap-1.5 transition"
                   >
                     <Check className="w-4 h-4" />

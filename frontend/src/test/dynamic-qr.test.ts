@@ -333,3 +333,80 @@ test('15. Interactive Simulator State Transition Safeguards', () => {
   assert.equal(testStateTransition('closed', 'normal'), true);
   assert.equal(testStateTransition('normal', 'hacked_state'), false);
 });
+
+// ------------------------------------------------------------------------------
+// 16. Static Test QR Mode Contract & Non-Rotation Rule (Phase 2 & Phase 4)
+// ------------------------------------------------------------------------------
+test('16. Static Test QR Mode Contract & Non-Rotation Rule', () => {
+  const staticQrResponse: QrTokenResponse = {
+    sessionId: 101,
+    qrToken: 'STQR:101:8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b',
+    issuedAt: '2026-11-08T08:00:00',
+    expiresAt: '2026-11-08T08:30:00',
+    rotationExpiresAt: '2026-11-08T08:30:00',
+    rotationIntervalSeconds: 0,
+    remainingSeconds: 1800,
+    status: 'OPEN',
+    mode: 'STATIC_TEST_QR',
+  };
+
+  assert.equal(staticQrResponse.mode, 'STATIC_TEST_QR');
+  assert.equal(staticQrResponse.rotationIntervalSeconds, 0, 'Static QR has 0 rotation interval (never auto-rotates)');
+  assert.ok(staticQrResponse.remainingSeconds > 1000, 'Static QR holds full test duration TTL');
+  assert.ok(staticQrResponse.qrToken.startsWith('STQR:101:'));
+});
+
+// ------------------------------------------------------------------------------
+// 17. Static Test QR Eligibility Guard (UNICHECK-E2E-01 & Non-Student)
+// ------------------------------------------------------------------------------
+test('17. Static Test QR Eligibility Guard', () => {
+  const evaluateStaticQrEligibility = (
+    role: Role,
+    className: string,
+    isDevOrTestEnv: boolean
+  ): { allowed: boolean; reason?: string } => {
+    if (!isDevOrTestEnv) {
+      return { allowed: false, reason: 'Static Test QR is strictly disabled in production' };
+    }
+    if (role === 'STUDENT') {
+      return { allowed: false, reason: 'Students cannot issue or manage Static Test QR' };
+    }
+    if (className !== 'UNICHECK-E2E-01') {
+      return { allowed: false, reason: 'Static Test QR is only allowed for test class UNICHECK-E2E-01' };
+    }
+    return { allowed: true };
+  };
+
+  assert.equal(evaluateStaticQrEligibility('LECTURER', 'UNICHECK-E2E-01', true).allowed, true);
+  assert.equal(evaluateStaticQrEligibility('ADMIN', 'UNICHECK-E2E-01', true).allowed, true);
+  assert.equal(evaluateStaticQrEligibility('STUDENT', 'UNICHECK-E2E-01', true).allowed, false);
+  assert.equal(evaluateStaticQrEligibility('LECTURER', 'SE1801-PRJ301', true).allowed, false);
+  assert.equal(evaluateStaticQrEligibility('LECTURER', 'UNICHECK-E2E-01', false).allowed, false);
+});
+
+// ------------------------------------------------------------------------------
+// 18. Zero LocalStorage Policy for Static Test QR Token
+// ------------------------------------------------------------------------------
+test('18. Zero LocalStorage Policy for Static Test QR Token', () => {
+  const mockLocalStorage: Record<string, string> = {};
+
+  const storeKeyInLocalStorage = (key: string, val: string) => {
+    // Prohibited keys rule
+    const prohibitedPatterns = ['qr', 'STQR', 'STATIC_QR', 'faceSample', 'eyJh'];
+    const isProhibited = prohibitedPatterns.some((pattern) => 
+      key.toLowerCase().includes(pattern.toLowerCase()) || val.includes(pattern)
+    );
+    if (isProhibited) {
+      throw new Error(`Security Violation: Storing sensitive token/biometric in localStorage is forbidden!`);
+    }
+    mockLocalStorage[key] = val;
+  };
+
+  assert.throws(() => {
+    storeKeyInLocalStorage('static_qr_token', 'STQR:101:token_secret');
+  }, /Security Violation/);
+
+  assert.throws(() => {
+    storeKeyInLocalStorage('cached_qr', 'eyJhbGciOiJIUzI1NiJ9.test');
+  }, /Security Violation/);
+});

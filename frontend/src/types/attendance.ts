@@ -34,6 +34,7 @@ export interface AttendanceSessionResponse {
   attendancePercentage: number;
   canOpen: boolean;
   canClose: boolean;
+  qrRotationIntervalSeconds?: number;
 }
 
 export interface AttendanceSessionStatusResponse {
@@ -88,6 +89,11 @@ export interface AttendanceConfigDto {
 export interface AttendanceSessionCreateRequest {
   timetableSlotId: number;
   autoOpen?: boolean;
+  qrRotationIntervalSeconds?: number;
+}
+
+export interface AttendanceSessionOpenRequest {
+  qrRotationIntervalSeconds?: number;
 }
 
 export interface AttendanceSessionQueryParams {
@@ -120,12 +126,22 @@ export interface StudentAttendanceResponse {
 export interface QrTokenResponse {
   sessionId: number;
   qrToken: string;
+  otpCode?: string;
   issuedAt: string;
   expiresAt: string;
   rotationExpiresAt: string;
   rotationIntervalSeconds: number;
   remainingSeconds: number;
   status: AttendanceSessionStatus;
+  mode?: 'DYNAMIC_QR' | 'STATIC_TEST_QR';
+}
+
+export interface StaticQrStatusResponse {
+  allowed: boolean;
+  reason?: string;
+  className?: string;
+  sessionId?: number;
+  sessionStatus?: AttendanceSessionStatus;
 }
 
 export interface QrValidationRequest {
@@ -141,4 +157,63 @@ export interface QrValidationResponse {
   issuedAt: string;
   expiresAt: string;
   message: string;
+}
+
+export interface SessionStudentAttendanceDto {
+  studentId: number;
+  studentCode: string;
+  fullName: string;
+  email: string;
+  attendanceId?: number | null;
+  status: 'PRESENT' | 'LATE' | 'ABSENT' | 'NOT_CHECKED_IN' | string;
+  checkInTime?: string | null;
+  method?: string | null;
+  faceConfidence?: number | null;
+  note?: string | null;
+  recheckStatus: 'NONE' | 'PENDING' | 'COMPLETED' | 'EXPIRED' | string;
+  recheckRequestId?: number | null;
+  recheckReason?: string | null;
+  recheckExpiresAt?: string | null;
+}
+
+export interface AttendanceManualAdjustRequest {
+  newStatus: 'PRESENT' | 'LATE' | 'ABSENT';
+  reason: string;
+}
+
+export interface AttendanceRecheckCreateRequest {
+  reason: string;
+  expirationMinutes?: number;
+}
+
+export interface AttendanceRecheckResponse {
+  requestId: number;
+  sessionId?: number | null;
+  studentId: number;
+  studentCode: string;
+  studentName: string;
+  courseCode: string;
+  courseName: string;
+  className: string;
+  roomCode: string;
+  reason: string;
+  status: string;
+  requestedAt?: string | null;
+  expiresAt?: string | null;
+  completedAt?: string | null;
+  requestedByName: string;
+}
+
+export interface AttendanceHistoryRecordDto {
+  id: number;
+  sessionId: number;
+  studentId: number;
+  studentCode: string;
+  studentName: string;
+  oldStatus: string;
+  newStatus: string;
+  reason: string;
+  modifiedByName: string;
+  modifiedAt: string;
+  modificationType: string;
 }

@@ -170,9 +170,10 @@ def extract_embedding():
 
         # 2. Detect Single Face
         face_info = detector.detect_single_face(image)
+        upright_image = face_info.get("image", image)
 
         # 3. Extract Feature Vector via ArcFace ONNX
-        embedding = engine.extract_embedding(image, face_info)
+        embedding = engine.extract_embedding(upright_image, face_info)
 
         return (
             jsonify({
@@ -290,12 +291,12 @@ def verify_face():
         if source_emb is None and data.get("source_image_base64"):
             img = decode_image_base64(data["source_image_base64"])
             face = detector.detect_single_face(img)
-            source_emb = engine.extract_embedding(img, face)
+            source_emb = engine.extract_embedding(face.get("image", img), face)
 
         if target_emb is None and data.get("target_image_base64"):
             img = decode_image_base64(data["target_image_base64"])
             face = detector.detect_single_face(img)
-            target_emb = engine.extract_embedding(img, face)
+            target_emb = engine.extract_embedding(face.get("image", img), face)
 
         if source_emb is None or target_emb is None:
             return (
@@ -418,9 +419,10 @@ def check_liveness():
 
         # 2. Detect Single Face
         face_info = detector.detect_single_face(image)
+        upright_image = face_info.get("image", image)
 
         # 3. Predict Liveness via MiniFASNet ONNX Engine
-        result = liveness_engine.predict_liveness(image, face_info, threshold=threshold)
+        result = liveness_engine.predict_liveness(upright_image, face_info, threshold=threshold)
 
         is_live = result["is_live"]
         msg = (

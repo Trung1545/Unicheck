@@ -728,6 +728,17 @@ export interface SlotTypeResponse {
   duration: string;
 }
 
+export interface AvailableRoomsQueryParams {
+  date: string;
+  slotNumber: number;
+  endSlotNumber?: number | null;
+  className?: string;
+  recurring?: boolean;
+  recurringUntil?: string;
+  semesterId?: number;
+  excludeSlotId?: number | null;
+}
+
 export interface TimetableStatsResponse {
   totalSlotsWeek: number;
   roomUtilizationRate: number;

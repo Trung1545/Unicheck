@@ -170,4 +170,19 @@ class ApiClient {
     }
     return error.toString();
   }
+
+  static String? extractErrorCode(dynamic error) {
+    if (error is DioException) {
+      if (error.response?.data is Map) {
+        final data = error.response!.data as Map;
+        if (data['errorCode'] != null) {
+          return data['errorCode'].toString();
+        }
+      }
+    }
+    if (error is ApiException) {
+      return error.errorCode;
+    }
+    return null;
+  }
 }

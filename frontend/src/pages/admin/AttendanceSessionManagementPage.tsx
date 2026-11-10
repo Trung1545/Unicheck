@@ -55,6 +55,8 @@ import {
   TimetableSlotResponse,
 } from '../../types/api';
 
+import { SessionStudentManagementModal } from '../../components/attendance/SessionStudentManagementModal';
+
 export const AttendanceSessionManagementPage: React.FC = () => {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
@@ -98,10 +100,12 @@ export const AttendanceSessionManagementPage: React.FC = () => {
 
   // 4. Modals State
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [qrRotationSeconds, setQrRotationSeconds] = useState<number>(10);
   const [selectedSlotIdForCreate, setSelectedSlotIdForCreate] = useState<number | null>(null);
   const [autoOpenOnCreate, setAutoOpenOnCreate] = useState(false);
   const [createModalLoading, setCreateModalLoading] = useState(false);
   const [createModalError, setCreateModalError] = useState<string | null>(null);
+  const [showStudentManagementModal, setShowStudentManagementModal] = useState(false);
 
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -327,7 +331,9 @@ export const AttendanceSessionManagementPage: React.FC = () => {
     setActionLoading(true);
     setError(null);
     try {
-      const res = await openAttendanceSessionApi(session.id);
+      const res = await openAttendanceSessionApi(session.id, {
+        qrRotationIntervalSeconds: qrRotationSeconds,
+      });
       if (res.success) {
         setSuccessMessage(`Đã mở phiên điểm danh thành công (#SES-${session.id}) cho lớp ${session.className}`);
         setConfirmDialog({ open: false, type: 'OPEN', session: null });
@@ -899,7 +905,7 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                             {ses.canOpen && (
                               <button
                                 type="button"
-                                onClick={() => setConfirmDialog({ open: true, type: 'OPEN', session: ses })}
+                                onClick={() => { setQrRotationSeconds(ses.qrRotationIntervalSeconds || 10); setConfirmDialog({ open: true, type: 'OPEN', session: ses }); }}
                                 className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs"
                                 title="Mở phiên điểm danh"
                               >
@@ -939,6 +945,19 @@ export const AttendanceSessionManagementPage: React.FC = () => {
                               title="Xem chi tiết phiên"
                             >
                               <Eye className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedSession(ses);
+                                setShowStudentManagementModal(true);
+                              }}
+                              className="px-2 py-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold flex items-center gap-1 border border-indigo-200 transition-colors"
+                              title="Quản lý danh sách sinh viên & Điểm danh lại"
+                            >
+                              <Users className="w-3.5 h-3.5" />
+                              <span className="hidden xl:inline">Quản lý SV</span>
                             </button>
                           </div>
                         </td>
@@ -1140,11 +1159,20 @@ export const AttendanceSessionManagementPage: React.FC = () => {
 
               {/* Action Buttons for Selected Session */}
               <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowStudentManagementModal(true)}
+                  className="w-full h-10 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Quản lý SV & Điểm danh lại</span>
+                </button>
+
                 {selectedSession.canOpen && (
                   <button
                     type="button"
                     disabled={actionLoading}
-                    onClick={() => setConfirmDialog({ open: true, type: 'OPEN', session: selectedSession })}
+                    onClick={() => { setQrRotationSeconds(selectedSession.qrRotationIntervalSeconds || 10); setConfirmDialog({ open: true, type: 'OPEN', session: selectedSession }); }}
                     className="w-full h-10 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-1.5 shadow-sm"
                   >
                     <Play className="w-4 h-4 fill-current" />
@@ -1396,6 +1424,20 @@ export const AttendanceSessionManagementPage: React.FC = () => {
           </div>
         </div>
       )}
+    
+      {/* Session Student Management & Re-check Modal */}
+      <SessionStudentManagementModal
+        session={selectedSession}
+        isOpen={showStudentManagementModal}
+        onClose={() => setShowStudentManagementModal(false)}
+        onSessionUpdated={() => {
+          fetchSessions();
+          fetchStats();
+          if (selectedSession?.id) {
+            fetchCheckIns(selectedSession.id);
+          }
+        }}
+      />
     </div>
   );
 };

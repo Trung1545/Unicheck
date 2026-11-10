@@ -7,6 +7,7 @@ import com.unicheck.model.entity.*;
 import com.unicheck.model.enums.Role;
 import com.unicheck.model.enums.RoomStatus;
 import com.unicheck.model.enums.TimetableSlotStatus;
+import com.unicheck.model.enums.AttendanceSessionStatus;
 import com.unicheck.repository.*;
 import com.unicheck.security.UserPrincipal;
 import com.unicheck.service.SystemLogService;
@@ -40,11 +41,14 @@ public class TimetableServiceImpl implements TimetableService {
     private final HolidayRepository holidayRepository;
     private final ClassSectionRepository classSectionRepository;
     private final RoomRepository roomRepository;
+    private final SemesterRepository semesterRepository;
     private final UserRepository userRepository;
+    private final AttendanceSessionRepository attendanceSessionRepository;
+    private final StudentAttendanceRepository studentAttendanceRepository;
     private final SystemLogService systemLogService;
 
     // Standard period times (Tiết 1 - 12)
-    private static final LocalTime[] PERIOD_START_TIMES = {
+    public static final LocalTime[] PERIOD_START_TIMES = {
         null,
         LocalTime.of(7, 0),   // Tiết 1
         LocalTime.of(7, 50),  // Tiết 2
@@ -60,7 +64,7 @@ public class TimetableServiceImpl implements TimetableService {
         LocalTime.of(17, 10)  // Tiết 12
     };
 
-    private static final LocalTime[] PERIOD_END_TIMES = {
+    public static final LocalTime[] PERIOD_END_TIMES = {
         null,
         LocalTime.of(7, 45),  // Tiết 1
         LocalTime.of(8, 35),  // Tiết 2
@@ -128,7 +132,7 @@ public class TimetableServiceImpl implements TimetableService {
     }
 
     // =========================================================================
-    // 2. Create Timetable Slot (with Conflict & Integrity Safeguards)
+    // 2. Create Timetable Slot (with Interval Conflict & Integrity Safeguards)
     // =========================================================================
 
     @Override
@@ -155,35 +159,26 @@ public class TimetableServiceImpl implements TimetableService {
             throw new AppException(ErrorCode.INVALID_PERIOD_RANGE, "Tiết học phải từ 1 đến 12 và tiết kết thúc phải >= tiết bắt đầu");
         }
 
-        // 4. Kiểm tra phòng học đủ điều kiện
+        LocalTime startTime = PERIOD_START_TIMES[slotNumber];
+        LocalTime endTime = PERIOD_END_TIMES[endSlotNumber];
+
+        // 4. Kiểm tra phòng học đủ điều kiện & PESSIMISTIC WRITE LOCK ngăn chặn Race Condition
         Room room = null;
         if (request.getRoomId() != null) {
-            room = roomRepository.findById(request.getRoomId())
+            room = roomRepository.findByIdForUpdate(request.getRoomId())
                     .orElseThrow(() -> new AppException(ErrorCode.ROOM_NOT_FOUND, "Không tìm thấy phòng học với ID: " + request.getRoomId()));
 
             validateRoomSuitability(room, classSection);
         }
 
-        // 5. Kiểm tra xung đột lịch học (Room, Lecturer, ClassSection)
-        detectAndThrowConflicts(room, classSection, request.getDate(), slotNumber, null);
+        // 5. Kiểm tra xung đột lịch học (Room, Lecturer, ClassSection) theo khoảng thời gian thực
+        detectAndThrowConflicts(room, classSection, request.getDate(), startTime, endTime, slotNumber, null);
 
         // 6. Gán loại tiết / ca học (SlotType)
         SlotType slotType = resolveSlotType(request.getSlotTypeId(), slotNumber, semester.getId());
 
-        TimetableSlot slot = TimetableSlot.builder()
-                .classSection(classSection)
-                .room(room)
-                .slotType(slotType)
-                .date(request.getDate())
-                .dayOfWeek(request.getDate().getDayOfWeek().getValue())
-                .slotNumber(slotNumber)
-                .status(TimetableSlotStatus.SCHEDULED)
-                .note(request.getNote() != null ? request.getNote().trim() : null)
-                .build();
-
-        TimetableSlot saved = timetableSlotRepository.save(slot);
-
-        // Xử lý tạo lịch học lặp lại theo tuần (Weekly recurrence) nếu được chọn
+        // 7. Thẩm định toàn diện nếu lặp lại định kỳ (Weekly recurrence)
+        List<LocalDate> recurringDates = new ArrayList<>();
         if (Boolean.TRUE.equals(request.getRecurring())) {
             LocalDate recurEnd = (request.getRecurringUntil() != null) ? request.getRecurringUntil() : semester.getEndDate();
             if (recurEnd.isAfter(semester.getEndDate())) {
@@ -191,44 +186,58 @@ public class TimetableServiceImpl implements TimetableService {
             }
 
             LocalDate nextDate = request.getDate().plusWeeks(1);
-            int recurringCount = 0;
             while (!nextDate.isAfter(recurEnd)) {
                 if (!holidayRepository.existsBySemesterIdAndHolidayDate(semester.getId(), nextDate)) {
-                    // Kiểm tra xem có trùng xung đột tại ngày tuần kế tiếp không
-                    boolean hasConflict = false;
-                    if (room != null && !timetableSlotRepository.findRoomConflicts(room.getId(), nextDate, slotNumber, null).isEmpty()) {
-                        hasConflict = true;
-                    }
-                    if (classSection.getLecturer() != null && !timetableSlotRepository.findLecturerConflicts(classSection.getLecturer().getId(), nextDate, slotNumber, null).isEmpty()) {
-                        hasConflict = true;
-                    }
-                    if (!timetableSlotRepository.findClassConflicts(classSection.getClassName(), nextDate, slotNumber, null).isEmpty()) {
-                        hasConflict = true;
-                    }
-
-                    if (!hasConflict) {
-                        TimetableSlot recurSlot = TimetableSlot.builder()
-                                .classSection(classSection)
-                                .room(room)
-                                .slotType(slotType)
-                                .date(nextDate)
-                                .dayOfWeek(nextDate.getDayOfWeek().getValue())
-                                .slotNumber(slotNumber)
-                                .status(TimetableSlotStatus.SCHEDULED)
-                                .note(request.getNote() != null ? request.getNote().trim() : null)
-                                .build();
-                        timetableSlotRepository.save(recurSlot);
-                        recurringCount++;
-                    }
+                    // Kiểm tra xem có trùng xung đột tại ngày tuần này không
+                    detectAndThrowConflicts(room, classSection, nextDate, startTime, endTime, slotNumber, null);
+                    recurringDates.add(nextDate);
                 }
                 nextDate = nextDate.plusWeeks(1);
             }
-            log.info("Đã tạo thêm {} tiết học định kỳ theo tuần cho lớp {}", recurringCount, classSection.getClassName());
+        }
+
+        // 8. Lưu slot chính
+        TimetableSlot slot = TimetableSlot.builder()
+                .classSection(classSection)
+                .room(room)
+                .slotType(slotType)
+                .date(request.getDate())
+                .dayOfWeek(request.getDate().getDayOfWeek().getValue())
+                .slotNumber(slotNumber)
+                .endSlotNumber(endSlotNumber)
+                .startTime(startTime)
+                .endTime(endTime)
+                .status(TimetableSlotStatus.SCHEDULED)
+                .note(request.getNote() != null ? request.getNote().trim() : null)
+                .build();
+
+        TimetableSlot saved = timetableSlotRepository.save(slot);
+
+        // 9. Lưu các slot lặp lại
+        for (LocalDate recurDate : recurringDates) {
+            TimetableSlot recurSlot = TimetableSlot.builder()
+                    .classSection(classSection)
+                    .room(room)
+                    .slotType(slotType)
+                    .date(recurDate)
+                    .dayOfWeek(recurDate.getDayOfWeek().getValue())
+                    .slotNumber(slotNumber)
+                    .endSlotNumber(endSlotNumber)
+                    .startTime(startTime)
+                    .endTime(endTime)
+                    .status(TimetableSlotStatus.SCHEDULED)
+                    .note(request.getNote() != null ? request.getNote().trim() : null)
+                    .build();
+            timetableSlotRepository.save(recurSlot);
+        }
+
+        if (!recurringDates.isEmpty()) {
+            log.info("Đã tạo thêm {} tiết học định kỳ theo tuần cho lớp {}", recurringDates.size(), classSection.getClassName());
         }
 
         systemLogService.logAudit(
                 "TIMETABLE_CREATE_SLOT",
-                "Tạo tiết học cho lớp " + classSection.getClassName() + " vào ngày " + request.getDate() + " (Tiết " + slotNumber + ")" + (room != null ? " tại P. " + room.getCode() : ""),
+                "Tạo tiết học cho lớp " + classSection.getClassName() + " vào ngày " + request.getDate() + " (Tiết " + slotNumber + "-" + endSlotNumber + ")" + (room != null ? " tại P. " + room.getCode() : ""),
                 getCurrentAuthenticatedUser(),
                 null,
                 String.valueOf(saved.getId()),
@@ -269,6 +278,15 @@ public class TimetableServiceImpl implements TimetableService {
 
         LocalDate targetDate = (request.getDate() != null) ? request.getDate() : slot.getDate();
         Integer targetSlotNumber = (request.getSlotNumber() != null) ? request.getSlotNumber() : slot.getSlotNumber();
+        Integer targetEndSlotNumber = (request.getEndSlotNumber() != null) ? request.getEndSlotNumber() :
+                (slot.getEndSlotNumber() != null ? slot.getEndSlotNumber() : targetSlotNumber);
+
+        if (targetEndSlotNumber < targetSlotNumber || targetSlotNumber < 1 || targetEndSlotNumber > 12) {
+            throw new AppException(ErrorCode.INVALID_PERIOD_RANGE, "Tiết học phải từ 1 đến 12 và tiết kết thúc phải >= tiết bắt đầu");
+        }
+
+        LocalTime targetStartTime = PERIOD_START_TIMES[targetSlotNumber];
+        LocalTime targetEndTime = PERIOD_END_TIMES[targetEndSlotNumber];
 
         // Kiểm tra ngày học & ngày nghỉ nếu ngày thay đổi
         if (request.getDate() != null && !request.getDate().equals(slot.getDate())) {
@@ -276,21 +294,25 @@ public class TimetableServiceImpl implements TimetableService {
             validateHoliday(targetDate, semester.getId());
         }
 
-        // Kiểm tra phòng học
+        // Kiểm tra phòng học + PESSIMISTIC LOCK nếu có phòng
         Room targetRoom = slot.getRoom();
-        if (request.getRoomId() != null && (slot.getRoom() == null || !request.getRoomId().equals(slot.getRoom().getId()))) {
-            targetRoom = roomRepository.findById(request.getRoomId())
-                    .orElseThrow(() -> new AppException(ErrorCode.ROOM_NOT_FOUND, "Không tìm thấy phòng học với ID: " + request.getRoomId()));
+        Long newRoomId = request.getRoomId();
+        if (newRoomId != null) {
+            targetRoom = roomRepository.findByIdForUpdate(newRoomId)
+                    .orElseThrow(() -> new AppException(ErrorCode.ROOM_NOT_FOUND, "Không tìm thấy phòng học với ID: " + newRoomId));
             validateRoomSuitability(targetRoom, classSection);
         }
 
-        // Kiểm tra xung đột lịch (loại trừ chính slot này)
-        detectAndThrowConflicts(targetRoom, classSection, targetDate, targetSlotNumber, id);
+        // Kiểm tra xung đột lịch theo khoảng thời gian thực (loại trừ chính slot này qua id)
+        detectAndThrowConflicts(targetRoom, classSection, targetDate, targetStartTime, targetEndTime, targetSlotNumber, id);
 
         // Cập nhật các trường
         slot.setDate(targetDate);
         slot.setDayOfWeek(targetDate.getDayOfWeek().getValue());
         slot.setSlotNumber(targetSlotNumber);
+        slot.setEndSlotNumber(targetEndSlotNumber);
+        slot.setStartTime(targetStartTime);
+        slot.setEndTime(targetEndTime);
         slot.setRoom(targetRoom);
 
         if (request.getSlotTypeId() != null) {
@@ -307,7 +329,7 @@ public class TimetableServiceImpl implements TimetableService {
 
         systemLogService.logAudit(
                 "TIMETABLE_UPDATE_SLOT",
-                "Cập nhật tiết học ID " + id + " cho lớp " + classSection.getClassName() + " sang ngày " + targetDate + " (Tiết " + targetSlotNumber + ")",
+                "Cập nhật tiết học ID " + id + " cho lớp " + classSection.getClassName() + " sang ngày " + targetDate + " (Tiết " + targetSlotNumber + "-" + targetEndSlotNumber + ")",
                 getCurrentAuthenticatedUser(),
                 null,
                 String.valueOf(updated.getId()),
@@ -380,7 +402,7 @@ public class TimetableServiceImpl implements TimetableService {
     }
 
     // =========================================================================
-    // 6. Pre-flight Conflict Check (Real-time Collision Validation)
+    // 6. Pre-flight Conflict Check (Real-time Interval Overlap Validation)
     // =========================================================================
 
     @Override
@@ -389,6 +411,10 @@ public class TimetableServiceImpl implements TimetableService {
         Long excludeId = request.getExcludeSlotId();
         LocalDate date = request.getDate();
         Integer slotNumber = request.getSlotNumber();
+        Integer endSlotNumber = (request.getEndSlotNumber() != null) ? request.getEndSlotNumber() : slotNumber;
+
+        LocalTime startTime = (slotNumber != null && slotNumber >= 1 && slotNumber <= 12) ? PERIOD_START_TIMES[slotNumber] : LocalTime.of(7, 0);
+        LocalTime endTime = (endSlotNumber != null && endSlotNumber >= 1 && endSlotNumber <= 12) ? PERIOD_END_TIMES[endSlotNumber] : LocalTime.of(9, 25);
 
         // 1. Kiểm tra ngày nằm trong học kỳ nếu có className
         if (StringUtils.hasText(request.getClassName())) {
@@ -415,15 +441,16 @@ public class TimetableServiceImpl implements TimetableService {
             }
         }
 
-        // 2. Kiểm tra trùng phòng học
+        // 2. Kiểm tra trùng phòng học theo khoảng thời gian thực
         if (request.getRoomId() != null) {
-            List<TimetableSlot> roomConflicts = timetableSlotRepository.findRoomConflicts(request.getRoomId(), date, slotNumber, excludeId);
+            List<TimetableSlot> roomConflicts = timetableSlotRepository.findRoomConflictsByInterval(
+                    request.getRoomId(), date, startTime, endTime, slotNumber, excludeId);
             if (!roomConflicts.isEmpty()) {
                 TimetableSlot conflict = roomConflicts.get(0);
                 return TimetableConflictCheckResponse.builder()
                         .hasConflict(true)
                         .conflictType("ROOM_CONFLICT")
-                        .conflictMessage("Phòng học đã được xếp lịch cho lớp " + conflict.getClassSection().getClassName() + " vào Tiết " + slotNumber + " ngày " + date)
+                        .conflictMessage("Phòng học đã được xếp lịch cho lớp " + conflict.getClassSection().getClassName() + " vào khung giờ " + startTime + " - " + endTime + " ngày " + date)
                         .conflictingSlotId(conflict.getId())
                         .conflictingClassName(conflict.getClassSection().getClassName())
                         .conflictingRoomCode(conflict.getRoom() != null ? conflict.getRoom().getCode() : null)
@@ -431,7 +458,7 @@ public class TimetableServiceImpl implements TimetableService {
             }
         }
 
-        // 3. Kiểm tra trùng giảng viên
+        // 3. Kiểm tra trùng giảng viên theo khoảng thời gian thực
         Long lecturerId = request.getLecturerId();
         if (lecturerId == null && StringUtils.hasText(request.getClassName())) {
             classSectionRepository.findById(request.getClassName())
@@ -444,7 +471,8 @@ public class TimetableServiceImpl implements TimetableService {
         }
 
         if (lecturerId != null) {
-            List<TimetableSlot> lecturerConflicts = timetableSlotRepository.findLecturerConflicts(lecturerId, date, slotNumber, excludeId);
+            List<TimetableSlot> lecturerConflicts = timetableSlotRepository.findLecturerConflictsByInterval(
+                    lecturerId, date, startTime, endTime, slotNumber, excludeId);
             if (!lecturerConflicts.isEmpty()) {
                 TimetableSlot conflict = lecturerConflicts.get(0);
                 String lecturerName = conflict.getClassSection().getLecturer() != null ?
@@ -454,7 +482,7 @@ public class TimetableServiceImpl implements TimetableService {
                 return TimetableConflictCheckResponse.builder()
                         .hasConflict(true)
                         .conflictType("LECTURER_CONFLICT")
-                        .conflictMessage(lecturerName + " đã có lịch dạy lớp " + conflict.getClassSection().getClassName() + " tại " + (conflict.getRoom() != null ? "P. " + conflict.getRoom().getCode() : "phòng khác") + " vào Tiết " + slotNumber)
+                        .conflictMessage(lecturerName + " đã có lịch dạy lớp " + conflict.getClassSection().getClassName() + " tại " + (conflict.getRoom() != null ? "P. " + conflict.getRoom().getCode() : "phòng khác") + " vào khung giờ " + startTime + " - " + endTime)
                         .conflictingSlotId(conflict.getId())
                         .conflictingClassName(conflict.getClassSection().getClassName())
                         .conflictingLecturerName(lecturerName)
@@ -463,15 +491,16 @@ public class TimetableServiceImpl implements TimetableService {
             }
         }
 
-        // 4. Kiểm tra trùng lớp học phần
+        // 4. Kiểm tra trùng lớp học phần theo khoảng thời gian thực
         if (StringUtils.hasText(request.getClassName())) {
-            List<TimetableSlot> classConflicts = timetableSlotRepository.findClassConflicts(request.getClassName(), date, slotNumber, excludeId);
+            List<TimetableSlot> classConflicts = timetableSlotRepository.findClassConflictsByInterval(
+                    request.getClassName(), date, startTime, endTime, slotNumber, excludeId);
             if (!classConflicts.isEmpty()) {
                 TimetableSlot conflict = classConflicts.get(0);
                 return TimetableConflictCheckResponse.builder()
                         .hasConflict(true)
                         .conflictType("CLASS_CONFLICT")
-                        .conflictMessage("Lớp học phần " + request.getClassName() + " đã có lịch học vào Tiết " + slotNumber + " ngày " + date)
+                        .conflictMessage("Lớp học phần " + request.getClassName() + " đã có lịch học vào khung giờ " + startTime + " - " + endTime + " ngày " + date)
                         .conflictingSlotId(conflict.getId())
                         .conflictingClassName(request.getClassName())
                         .build();
@@ -483,6 +512,96 @@ public class TimetableServiceImpl implements TimetableService {
                 .conflictType("NONE")
                 .conflictMessage("Không có xung đột lịch nào. Khung giờ và phòng học hợp lệ.")
                 .build();
+    }
+
+    // =========================================================================
+    // 6b. Real-time Available Rooms Filtering (with Interval & Recurrence Check)
+    // =========================================================================
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RoomResponse> getAvailableRooms(
+            LocalDate date,
+            Integer slotNumber,
+            Integer endSlotNumber,
+            String className,
+            Boolean recurring,
+            LocalDate recurringUntil,
+            Long semesterId,
+            Long excludeSlotId
+    ) {
+        if (date == null || slotNumber == null) {
+            return Collections.emptyList();
+        }
+
+        int startP = slotNumber;
+        int endP = (endSlotNumber != null) ? endSlotNumber : startP;
+        if (startP < 1 || startP > 12 || endP < 1 || endP > 12 || endP < startP) {
+            throw new AppException(ErrorCode.INVALID_PERIOD_RANGE, "Tiết học phải từ 1 đến 12 và tiết kết thúc phải >= tiết bắt đầu");
+        }
+
+        LocalTime startTime = PERIOD_START_TIMES[startP];
+        LocalTime endTime = PERIOD_END_TIMES[endP];
+
+        // 1. Tập hợp các ngày cần thẩm định (1 ngày hoặc chuỗi ngày lặp lại)
+        Set<LocalDate> targetDates = new LinkedHashSet<>();
+        targetDates.add(date);
+
+        if (Boolean.TRUE.equals(recurring)) {
+            Semester semester = null;
+            if (semesterId != null) {
+                semester = semesterRepository.findById(semesterId).orElse(null);
+            }
+            if (semester == null && StringUtils.hasText(className)) {
+                Optional<ClassSection> csOpt = classSectionRepository.findById(className);
+                if (csOpt.isPresent()) {
+                    semester = csOpt.get().getSemester();
+                }
+            }
+
+            LocalDate until = recurringUntil;
+            if (until == null) {
+                until = (semester != null && semester.getEndDate() != null) ? semester.getEndDate() : date.plusWeeks(15);
+            } else if (semester != null && semester.getEndDate() != null && until.isAfter(semester.getEndDate())) {
+                until = semester.getEndDate();
+            }
+
+            Long semId = (semester != null) ? semester.getId() : null;
+            LocalDate nextDate = date.plusWeeks(1);
+            while (!nextDate.isAfter(until)) {
+                boolean isHoliday = (semId != null) && holidayRepository.existsBySemesterIdAndHolidayDate(semId, nextDate);
+                if (!isHoliday) {
+                    targetDates.add(nextDate);
+                }
+                nextDate = nextDate.plusWeeks(1);
+            }
+        }
+
+        // 2. Tìm danh sách ID các phòng bị chiếm trong bất kỳ ngày nào trong targetDates
+        List<Long> occupiedRoomIds = timetableSlotRepository.findOccupiedRoomIdsOnDates(
+                targetDates, startTime, endTime, startP, excludeSlotId);
+        Set<Long> occupiedSet = new HashSet<>(occupiedRoomIds);
+
+        // 3. Sĩ số lớp học phần nếu có
+        Integer requiredCapacity = null;
+        if (StringUtils.hasText(className)) {
+            ClassSection cs = classSectionRepository.findById(className).orElse(null);
+            if (cs != null && cs.getCurrentEnrollment() != null && cs.getCurrentEnrollment() > 0) {
+                requiredCapacity = cs.getCurrentEnrollment();
+            }
+        }
+
+        // 4. Lấy tất cả phòng đang AVAILABLE và lọc
+        final Integer minCapacity = requiredCapacity;
+        List<Room> allRooms = roomRepository.findAll();
+
+        return allRooms.stream()
+                .filter(r -> r.getStatus() == RoomStatus.AVAILABLE)
+                .filter(r -> !occupiedSet.contains(r.getId()))
+                .filter(r -> minCapacity == null || (r.getCapacity() != null && r.getCapacity() >= minCapacity))
+                .sorted(Comparator.comparing(Room::getCode))
+                .map(RoomResponse::fromEntity)
+                .collect(Collectors.toList());
     }
 
     // =========================================================================
@@ -597,7 +716,6 @@ public class TimetableServiceImpl implements TimetableService {
                     "Phòng học " + room.getCode() + " hiện đang ở trạng thái '" + room.getStatus() + "', không khả dụng để xếp lịch"
             );
         }
-
         if (classSection.getCurrentEnrollment() != null && classSection.getCurrentEnrollment() > room.getCapacity()) {
             throw new AppException(
                     ErrorCode.ROOM_CAPACITY_INSUFFICIENT,
@@ -606,35 +724,46 @@ public class TimetableServiceImpl implements TimetableService {
         }
     }
 
-    private void detectAndThrowConflicts(Room room, ClassSection classSection, LocalDate date, Integer slotNumber, Long excludeId) {
+    private void detectAndThrowConflicts(
+            Room room,
+            ClassSection classSection,
+            LocalDate date,
+            LocalTime startTime,
+            LocalTime endTime,
+            Integer slotNumber,
+            Long excludeId
+    ) {
         // 1. Trùng lớp học phần
-        List<TimetableSlot> classConflicts = timetableSlotRepository.findClassConflicts(classSection.getClassName(), date, slotNumber, excludeId);
+        List<TimetableSlot> classConflicts = timetableSlotRepository.findClassConflictsByInterval(
+                classSection.getClassName(), date, startTime, endTime, slotNumber, excludeId);
         if (!classConflicts.isEmpty()) {
             throw new AppException(
                     ErrorCode.CLASS_SCHEDULE_CONFLICT,
-                    "Xung đột lớp học phần: Lớp " + classSection.getClassName() + " đã có lịch học vào Tiết " + slotNumber + " ngày " + date
+                    "Xung đột lớp học phần: Lớp " + classSection.getClassName() + " đã có lịch học vào khung giờ " + startTime + " - " + endTime + " ngày " + date
             );
         }
 
         // 2. Trùng giảng viên
         if (classSection.getLecturer() != null) {
-            List<TimetableSlot> lecturerConflicts = timetableSlotRepository.findLecturerConflicts(classSection.getLecturer().getId(), date, slotNumber, excludeId);
+            List<TimetableSlot> lecturerConflicts = timetableSlotRepository.findLecturerConflictsByInterval(
+                    classSection.getLecturer().getId(), date, startTime, endTime, slotNumber, excludeId);
             if (!lecturerConflicts.isEmpty()) {
                 String gv = classSection.getLecturer().getFullName() != null ? classSection.getLecturer().getFullName() : classSection.getLecturer().getUsername();
                 throw new AppException(
                         ErrorCode.LECTURER_SCHEDULE_CONFLICT,
-                        "Xung đột giảng viên: " + gv + " đã có lịch dạy lớp " + lecturerConflicts.get(0).getClassSection().getClassName() + " vào Tiết " + slotNumber + " ngày " + date
+                        "Xung đột giảng viên: " + gv + " đã có lịch dạy lớp " + lecturerConflicts.get(0).getClassSection().getClassName() + " vào khung giờ " + startTime + " - " + endTime + " ngày " + date
                 );
             }
         }
 
         // 3. Trùng phòng
         if (room != null) {
-            List<TimetableSlot> roomConflicts = timetableSlotRepository.findRoomConflicts(room.getId(), date, slotNumber, excludeId);
+            List<TimetableSlot> roomConflicts = timetableSlotRepository.findRoomConflictsByInterval(
+                    room.getId(), date, startTime, endTime, slotNumber, excludeId);
             if (!roomConflicts.isEmpty()) {
                 throw new AppException(
                         ErrorCode.ROOM_SCHEDULE_CONFLICT,
-                        "Xung đột phòng học: Phòng " + room.getCode() + " đã có lớp " + roomConflicts.get(0).getClassSection().getClassName() + " học vào Tiết " + slotNumber + " ngày " + date
+                        "Xung đột phòng học: Phòng " + room.getCode() + " đã có lớp " + roomConflicts.get(0).getClassSection().getClassName() + " học vào khung giờ " + startTime + " - " + endTime + " ngày " + date
                 );
             }
         }
@@ -693,72 +822,104 @@ public class TimetableServiceImpl implements TimetableService {
     }
 
     private List<TimetableSlotResponse> enrichAndMapSlots(List<TimetableSlot> slots) {
-        // Build collision map for highlighted cards in week view
-        Map<String, List<TimetableSlot>> roomMap = new HashMap<>();
-        Map<String, List<TimetableSlot>> lecturerMap = new HashMap<>();
+        // Detect collisions with interval overlap for week view badges
+        List<TimetableSlot> activeSlots = slots.stream()
+                .filter(s -> s.getStatus() != TimetableSlotStatus.CANCELLED)
+                .collect(Collectors.toList());
 
-        for (TimetableSlot s : slots) {
-            if (s.getStatus() != TimetableSlotStatus.CANCELLED) {
-                if (s.getRoom() != null) {
-                    String key = s.getRoom().getId() + "_" + s.getDate() + "_" + s.getSlotNumber();
-                    roomMap.computeIfAbsent(key, k -> new ArrayList<>()).add(s);
-                }
-                if (s.getClassSection() != null && s.getClassSection().getLecturer() != null) {
-                    String key = s.getClassSection().getLecturer().getId() + "_" + s.getDate() + "_" + s.getSlotNumber();
-                    lecturerMap.computeIfAbsent(key, k -> new ArrayList<>()).add(s);
+        Set<Long> roomConflictSlotIds = new HashSet<>();
+        Set<Long> lecturerConflictSlotIds = new HashSet<>();
+
+        for (int i = 0; i < activeSlots.size(); i++) {
+            TimetableSlot s1 = activeSlots.get(i);
+            LocalTime start1 = getEffectiveStartTime(s1);
+            LocalTime end1 = getEffectiveEndTime(s1);
+
+            for (int j = i + 1; j < activeSlots.size(); j++) {
+                TimetableSlot s2 = activeSlots.get(j);
+                if (!s1.getDate().equals(s2.getDate())) continue;
+
+                LocalTime start2 = getEffectiveStartTime(s2);
+                LocalTime end2 = getEffectiveEndTime(s2);
+
+                // Overlap: start1 < end2 AND start2 < end1
+                boolean overlaps = start1.isBefore(end2) && start2.isBefore(end1);
+                if (overlaps) {
+                    if (s1.getRoom() != null && s2.getRoom() != null && s1.getRoom().getId().equals(s2.getRoom().getId())) {
+                        roomConflictSlotIds.add(s1.getId());
+                        roomConflictSlotIds.add(s2.getId());
+                    }
+                    if (s1.getClassSection() != null && s1.getClassSection().getLecturer() != null &&
+                        s2.getClassSection() != null && s2.getClassSection().getLecturer() != null &&
+                        s1.getClassSection().getLecturer().getId().equals(s2.getClassSection().getLecturer().getId())) {
+                        lecturerConflictSlotIds.add(s1.getId());
+                        lecturerConflictSlotIds.add(s2.getId());
+                    }
                 }
             }
         }
 
         return slots.stream().map(s -> {
             TimetableSlotResponse resp = mapToResponse(s);
-
-            // Check if slot participates in collision
-            if (s.getRoom() != null) {
-                String key = s.getRoom().getId() + "_" + s.getDate() + "_" + s.getSlotNumber();
-                List<TimetableSlot> rList = roomMap.get(key);
-                if (rList != null && rList.size() > 1) {
-                    resp.setHasConflict(true);
-                    resp.setConflictType("ROOM_CONFLICT");
-                    resp.setConflictMessage("Trùng phòng " + s.getRoom().getCode() + " với lớp khác vào cùng khung giờ");
-                }
+            if (roomConflictSlotIds.contains(s.getId())) {
+                resp.setHasConflict(true);
+                resp.setConflictType("ROOM_CONFLICT");
+                resp.setConflictMessage("Trùng phòng " + (s.getRoom() != null ? s.getRoom().getCode() : "") + " với lớp khác vào cùng khung giờ");
+            } else if (lecturerConflictSlotIds.contains(s.getId())) {
+                resp.setHasConflict(true);
+                resp.setConflictType("LECTURER_CONFLICT");
+                resp.setConflictMessage("Trùng lịch giảng dạy của giảng viên tại 2 phòng học khác nhau");
             }
-
-            if (s.getClassSection() != null && s.getClassSection().getLecturer() != null) {
-                String key = s.getClassSection().getLecturer().getId() + "_" + s.getDate() + "_" + s.getSlotNumber();
-                List<TimetableSlot> lList = lecturerMap.get(key);
-                if (lList != null && lList.size() > 1) {
-                    resp.setHasConflict(true);
-                    resp.setConflictType("LECTURER_CONFLICT");
-                    resp.setConflictMessage("Trùng lịch giảng dạy của giảng viên tại 2 phòng học khác nhau");
-                }
-            }
-
             return resp;
         }).collect(Collectors.toList());
     }
 
     private long countCollisionsInSlots(List<TimetableSlot> slots) {
-        Map<String, Integer> roomCollisions = new HashMap<>();
-        Map<String, Integer> lecturerCollisions = new HashMap<>();
+        List<TimetableSlot> activeSlots = slots.stream()
+                .filter(s -> s.getStatus() != TimetableSlotStatus.CANCELLED)
+                .collect(Collectors.toList());
 
-        for (TimetableSlot s : slots) {
-            if (s.getStatus() != TimetableSlotStatus.CANCELLED) {
-                if (s.getRoom() != null) {
-                    String key = s.getRoom().getId() + "_" + s.getDate() + "_" + s.getSlotNumber();
-                    roomCollisions.put(key, roomCollisions.getOrDefault(key, 0) + 1);
-                }
-                if (s.getClassSection() != null && s.getClassSection().getLecturer() != null) {
-                    String key = s.getClassSection().getLecturer().getId() + "_" + s.getDate() + "_" + s.getSlotNumber();
-                    lecturerCollisions.put(key, lecturerCollisions.getOrDefault(key, 0) + 1);
+        Set<String> collisions = new HashSet<>();
+
+        for (int i = 0; i < activeSlots.size(); i++) {
+            TimetableSlot s1 = activeSlots.get(i);
+            LocalTime start1 = getEffectiveStartTime(s1);
+            LocalTime end1 = getEffectiveEndTime(s1);
+
+            for (int j = i + 1; j < activeSlots.size(); j++) {
+                TimetableSlot s2 = activeSlots.get(j);
+                if (!s1.getDate().equals(s2.getDate())) continue;
+
+                LocalTime start2 = getEffectiveStartTime(s2);
+                LocalTime end2 = getEffectiveEndTime(s2);
+
+                if (start1.isBefore(end2) && start2.isBefore(end1)) {
+                    if (s1.getRoom() != null && s2.getRoom() != null && s1.getRoom().getId().equals(s2.getRoom().getId())) {
+                        collisions.add("ROOM_" + s1.getRoom().getId() + "_" + s1.getDate() + "_" + s1.getId() + "_" + s2.getId());
+                    }
+                    if (s1.getClassSection() != null && s1.getClassSection().getLecturer() != null &&
+                        s2.getClassSection() != null && s2.getClassSection().getLecturer() != null &&
+                        s1.getClassSection().getLecturer().getId().equals(s2.getClassSection().getLecturer().getId())) {
+                        collisions.add("LECTURER_" + s1.getClassSection().getLecturer().getId() + "_" + s1.getDate() + "_" + s1.getId() + "_" + s2.getId());
+                    }
                 }
             }
         }
 
-        long roomCollisionCount = roomCollisions.values().stream().filter(c -> c > 1).count();
-        long lecturerCollisionCount = lecturerCollisions.values().stream().filter(c -> c > 1).count();
+        return collisions.size();
+    }
 
-        return roomCollisionCount + lecturerCollisionCount;
+    private LocalTime getEffectiveStartTime(TimetableSlot s) {
+        if (s.getStartTime() != null) return s.getStartTime();
+        int slot = (s.getSlotNumber() != null && s.getSlotNumber() >= 1 && s.getSlotNumber() <= 12) ? s.getSlotNumber() : 1;
+        return PERIOD_START_TIMES[slot];
+    }
+
+    private LocalTime getEffectiveEndTime(TimetableSlot s) {
+        if (s.getEndTime() != null) return s.getEndTime();
+        int endSlot = (s.getEndSlotNumber() != null && s.getEndSlotNumber() >= 1 && s.getEndSlotNumber() <= 12) ? s.getEndSlotNumber() :
+                ((s.getSlotNumber() != null && s.getSlotNumber() >= 1 && s.getSlotNumber() <= 12) ? s.getSlotNumber() : 1);
+        return PERIOD_END_TIMES[endSlot];
     }
 
     private TimetableSlotResponse mapToResponse(TimetableSlot s) {
@@ -770,19 +931,21 @@ public class TimetableServiceImpl implements TimetableService {
         SlotType st = s.getSlotType();
 
         int startPeriod = s.getSlotNumber() != null ? s.getSlotNumber() : 1;
-        int endPeriod = startPeriod;
-        if (startPeriod == 1 || startPeriod == 4 || startPeriod == 7 || startPeriod == 10) {
+        int endPeriod = s.getEndSlotNumber() != null ? s.getEndSlotNumber() : startPeriod;
+        if (s.getEndSlotNumber() == null && (startPeriod == 1 || startPeriod == 4 || startPeriod == 7 || startPeriod == 10)) {
             endPeriod = startPeriod + 2;
         }
 
-        LocalTime startTime = null;
-        LocalTime endTime = null;
-        if (st != null && st.getStartTime() != null) {
-            startTime = st.getStartTime();
-            endTime = st.getEndTime();
-        } else if (startPeriod >= 1 && startPeriod <= 12) {
-            startTime = PERIOD_START_TIMES[startPeriod];
-            endTime = PERIOD_END_TIMES[Math.min(12, endPeriod)];
+        LocalTime startTime = s.getStartTime();
+        LocalTime endTime = s.getEndTime();
+        if (startTime == null || endTime == null) {
+            if (st != null && st.getStartTime() != null) {
+                startTime = st.getStartTime();
+                endTime = st.getEndTime();
+            } else if (startPeriod >= 1 && startPeriod <= 12) {
+                startTime = PERIOD_START_TIMES[startPeriod];
+                endTime = PERIOD_END_TIMES[Math.min(12, endPeriod)];
+            }
         }
 
         String periodDisplay = "Tiết " + startPeriod + (endPeriod > startPeriod ? (" - " + endPeriod) : "") +
@@ -795,10 +958,30 @@ public class TimetableServiceImpl implements TimetableService {
             attendanceMethod = "Kiosk AI Face ID";
         }
 
-        long attendanceSessionsCount = timetableSlotRepository.countAttendanceSessionsBySlotId(s.getId());
+        Long attendanceSessionId = null;
+        String attendanceSessionStatus = null;
+        String studentAttendanceStatus = null;
+        boolean hasAttendanceSession = false;
+
+        Optional<AttendanceSession> sessionOpt = attendanceSessionRepository.findByTimetableSlotId(s.getId());
+        if (sessionOpt.isPresent()) {
+            AttendanceSession session = sessionOpt.get();
+            attendanceSessionId = session.getId();
+            attendanceSessionStatus = session.getStatus() != null ? session.getStatus().name() : null;
+            hasAttendanceSession = (session.getStatus() == AttendanceSessionStatus.OPEN);
+
+            User currentUser = getCurrentAuthenticatedUser();
+            if (currentUser != null) {
+                Optional<StudentAttendance> attOpt = studentAttendanceRepository.findBySessionIdAndStudentId(session.getId(), currentUser.getId());
+                if (attOpt.isPresent()) {
+                    studentAttendanceStatus = attOpt.get().getStatus();
+                }
+            }
+        }
 
         return TimetableSlotResponse.builder()
                 .id(s.getId())
+
                 .className(cs != null ? cs.getClassName() : null)
                 .courseCode(c != null ? c.getCode() : null)
                 .courseName(c != null ? c.getName() : null)
@@ -829,7 +1012,10 @@ public class TimetableServiceImpl implements TimetableService {
                 .maxStudents(cs != null ? cs.getMaxStudents() : 0)
                 .status(s.getStatus())
                 .note(s.getNote())
-                .hasAttendanceSession(attendanceSessionsCount > 0)
+                .hasAttendanceSession(hasAttendanceSession)
+                .attendanceSessionId(attendanceSessionId)
+                .attendanceSessionStatus(attendanceSessionStatus)
+                .studentAttendanceStatus(studentAttendanceStatus)
                 .hasConflict(false)
                 .createdAt(s.getCreatedAt())
                 .updatedAt(s.getUpdatedAt())

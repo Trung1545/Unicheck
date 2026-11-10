@@ -124,9 +124,11 @@ def verify_vectors(
     return {
         "matched": bool(matched),
         "similarity_score": round(cosine_sim, 4),
+        "similarity": round(cosine_sim, 4),
         "threshold": round(threshold, 4),
         "metric": metric,
         "euclidean_distance": round(euclidean_dist, 4),
+        "distance": round(euclidean_dist, 4),
         "model_name": config.MODEL_NAME,
         "model_version": config.MODEL_VERSION,
     }

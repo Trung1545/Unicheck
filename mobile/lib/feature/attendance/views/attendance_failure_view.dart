@@ -361,19 +361,26 @@ class AttendanceFailureView extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.school_outlined,
-                  size: 16, color: UniColors.primary),
-              const SizedBox(width: 6),
-              Text(
-                '${slot.courseCode} • ${slot.courseName}',
-                style: UniTypography.caption.copyWith(
-                  fontWeight: FontWeight.bold,
+          Expanded(
+            child: Row(
+              children: [
+                const Icon(Icons.school_outlined,
+                    size: 16, color: UniColors.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${slot.courseCode} • ${slot.courseName}',
+                    style: UniTypography.caption.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
+          const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(

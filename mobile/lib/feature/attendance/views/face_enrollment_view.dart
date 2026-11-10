@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import '../../../core/constants/demo_biometrics.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/storage/token_storage.dart';
@@ -47,6 +49,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
 
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
+  CameraDescription? _selectedCamera;
   bool _isCameraInitialized = false;
   bool _isStreaming = false;
   bool _isProcessingFrame = false;
@@ -121,7 +124,22 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
     await _initializeCamera();
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _switchCamera() async {
+    if (_cameras.length <= 1 || _cameraController == null) return;
+    await _stopFrameStream();
+    await _cameraController?.dispose();
+    _cameraController = null;
+    if (mounted) {
+      setState(() {
+        _isCameraInitialized = false;
+      });
+    }
+    final currentIdx = _selectedCamera != null ? _cameras.indexOf(_selectedCamera!) : 0;
+    final nextCam = _cameras[(currentIdx + 1) % _cameras.length];
+    await _initializeCamera(specificCamera: nextCam);
+  }
+
+  Future<void> _initializeCamera({CameraDescription? specificCamera}) async {
     try {
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
@@ -134,14 +152,27 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
         return;
       }
 
-      // Default to front camera
-      final frontCamera = _cameras.firstWhere(
-        (cam) => cam.lensDirection == CameraLensDirection.front,
-        orElse: () => _cameras.first,
-      );
+      // Default to front camera or use specific selection
+      if (specificCamera != null) {
+        _selectedCamera = specificCamera;
+      } else {
+        final frontCamIndex = _cameras.indexWhere(
+          (cam) => cam.lensDirection == CameraLensDirection.front,
+        );
+        if (frontCamIndex != -1) {
+          _selectedCamera = _cameras[frontCamIndex];
+        } else {
+          _selectedCamera = _cameras.first;
+        }
+      }
+
+      final isFront = _selectedCamera!.lensDirection == CameraLensDirection.front;
+      final fallbackWarning = isFront
+          ? null
+          : 'Cảnh báo: Thiết bị không có camera trước. Đang dùng camera sau (${_selectedCamera!.name}). Vui lòng nhìn vào webcam máy tính.';
 
       _cameraController = CameraController(
-        frontCamera,
+        _selectedCamera!,
         ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.nv21,
@@ -152,14 +183,14 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
 
       setState(() {
         _isCameraInitialized = true;
-        _warningMessage = null;
+        _warningMessage = fallbackWarning;
         _instructionTitle = 'Nhìn thẳng vào giữa khung hình';
         _instructionSubtitle = 'Giữ yên tư thế để hệ thống quét tự động';
         _scanStatus = BiometricScanStatus.scanning;
       });
 
       _debugLogger.logCameraInitialized(
-        lensDirection: frontCamera.lensDirection,
+        lensDirection: _selectedCamera!.lensDirection,
         resolutionPreset: ResolutionPreset.medium,
         imageFormatGroup: ImageFormatGroup.nv21,
       );
@@ -525,9 +556,11 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
 
   Future<void> _submitEnrollment() async {
     try {
-      final primaryImage = _capturedSamples.isNotEmpty
-          ? _capturedSamples.first['imageBase64']!
-          : 'data:image/jpeg;base64,mock';
+      if (_capturedSamples.isEmpty) {
+        throw Exception('Chưa có mẫu ảnh khuôn mặt hợp lệ để đăng ký');
+      }
+
+      final primaryImage = _capturedSamples.first['imageBase64']!;
 
       final result = await _apiService.registerFace(
         primaryImageBase64: primaryImage,
@@ -535,23 +568,29 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
         isReEnrollment: true,
       );
 
-      // Immediately synchronize reactive profile state across App
-      if (Get.isRegistered<AuthController>()) {
-        final authCtrl = Get.find<AuthController>();
-        authCtrl.updateFaceDataStatus('REGISTERED');
-        await authCtrl.refreshProfile();
-      }
-      if (Get.isRegistered<AttendanceController>()) {
-        final attCtrl = Get.find<AttendanceController>();
-        attCtrl.isFaceRegistered.value = true;
-        attCtrl.faceStatus.value = VerificationStatus.pass;
-      }
+      // Only mark REGISTERED when confirmed by backend result
+      if (result.success &&
+          (result.status == 'REGISTERED' || result.status == 'ACTIVE')) {
+        if (Get.isRegistered<AuthController>()) {
+          final authCtrl = Get.find<AuthController>();
+          authCtrl.updateFaceDataStatus('REGISTERED');
+          await authCtrl.refreshProfile();
+        }
+        if (Get.isRegistered<AttendanceController>()) {
+          final attCtrl = Get.find<AttendanceController>();
+          attCtrl.isFaceRegistered.value = true;
+          attCtrl.faceStatus.value = VerificationStatus.pass;
+        }
 
-      if (mounted) {
-        Get.offNamed(
-          AppRoutes.faceEnrollmentResult,
-          arguments: result,
-        );
+        if (mounted) {
+          Get.offNamed(
+            AppRoutes.faceEnrollmentResult,
+            arguments: result,
+          );
+        }
+      } else {
+        throw Exception(result.message ??
+            'Đăng ký khuôn mặt không thành công từ máy chủ học vụ');
       }
     } catch (e, stack) {
       _debugLogger.logError('Face enrollment API submission failed', e, stack);
@@ -573,7 +612,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
       'step': _currentStep == 1
           ? 'frontal'
           : (_currentStep == 2 ? 'left' : 'right'),
-      'imageBase64': 'data:image/jpeg;base64,simulated_frame',
+      'imageBase64': kDemoValidFaceBase64,
     });
 
     if (_currentStep < 3) {
@@ -914,7 +953,13 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
         children: [
           // 1. Camera Viewport
           if (_isCameraInitialized && _cameraController != null)
-            CameraPreview(_cameraController!)
+            (_selectedCamera?.lensDirection == CameraLensDirection.front)
+                ? Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.rotationY(math.pi),
+                    child: CameraPreview(_cameraController!),
+                  )
+                : CameraPreview(_cameraController!)
           else
             Container(
               color: const Color(0xFF0F172A),
@@ -925,7 +970,7 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
                     CircularProgressIndicator(color: UniColors.laserCyan),
                     SizedBox(height: 16),
                     Text(
-                      'Khởi động Camera trước...',
+                      'Khởi động Camera FaceID...',
                       style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ],
@@ -994,13 +1039,22 @@ class _FaceEnrollmentViewState extends State<FaceEnrollmentView>
                       ],
                     ),
                   ),
-                  // Flash toggle dummy button
+                  // Camera switch button if multiple cameras, else camera indicator
                   CircleAvatar(
                     backgroundColor: Colors.black54,
-                    child: IconButton(
-                      icon: const Icon(Icons.flash_off, color: Colors.white),
-                      onPressed: () {},
-                    ),
+                    child: _cameras.length > 1
+                        ? IconButton(
+                            icon: const Icon(Icons.flip_camera_ios_rounded, color: Colors.white, size: 20),
+                            onPressed: _switchCamera,
+                            tooltip: 'Đổi máy ảnh',
+                          )
+                        : Icon(
+                            _selectedCamera?.lensDirection == CameraLensDirection.front
+                                ? Icons.camera_front
+                                : Icons.camera_rear,
+                            color: Colors.white70,
+                            size: 18,
+                          ),
                   ),
                 ],
               ),

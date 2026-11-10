@@ -84,6 +84,9 @@ public class AiServiceClient {
                         if ("ERR_3002".equals(errCode)) {
                             throw new AppException(ErrorCode.MULTIPLE_FACES_DETECTED, errMsg);
                         }
+                        if ("ERR_3023".equals(errCode) || "ERR_1001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_IMAGE_INVALID, errMsg);
+                        }
                         throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
@@ -185,6 +188,9 @@ public class AiServiceClient {
                         if ("ERR_3004".equals(errCode)) {
                             throw new AppException(ErrorCode.FACE_NOT_MATCHED, errMsg);
                         }
+                        if ("ERR_3023".equals(errCode) || "ERR_1001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_IMAGE_INVALID, errMsg);
+                        }
                         throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (req, resp) -> {
@@ -271,6 +277,9 @@ public class AiServiceClient {
                         }
                         if ("ERR_3003".equals(errCode)) {
                             throw new AppException(ErrorCode.FACE_LIVENESS_FAILED, errMsg);
+                        }
+                        if ("ERR_3023".equals(errCode) || "ERR_1001".equals(errCode)) {
+                            throw new AppException(ErrorCode.FACE_IMAGE_INVALID, errMsg);
                         }
                         throw new AppException(ErrorCode.INVALID_REQUEST, errMsg);
                     })

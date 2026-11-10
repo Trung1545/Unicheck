@@ -25,6 +25,7 @@ import 'package:unicheck_mobile/shared/widgets/verification_check_item.dart';
 class MockAttendanceApiService extends Fake implements AttendanceApiService {
   List<RoomWifiAccessPointModel> mockAps = [];
   FaceStatusModel mockFace = const FaceStatusModel(isRegistered: true);
+  Map<String, dynamic>? mockQrResult;
 
   @override
   Future<List<RoomWifiAccessPointModel>> getRoomWifiAccessPoints(int roomId) async {
@@ -34,6 +35,14 @@ class MockAttendanceApiService extends Fake implements AttendanceApiService {
   @override
   Future<FaceStatusModel> getFaceStatus() async {
     return mockFace;
+  }
+
+  @override
+  Future<Map<String, dynamic>> validateQrToken({
+    required String qrToken,
+    required int sessionId,
+  }) async {
+    return mockQrResult ?? {'valid': true, 'sessionId': sessionId};
   }
 }
 
@@ -101,6 +110,38 @@ void main() {
       expect(payload.slotId, 303);
       expect(payload.roomCode, 'B1-201');
       expect(payload.isValid, isTrue);
+    });
+
+    test('QrPayloadModel parses Static Test QR format STQR:sessionId:token', () {
+      const staticQr = 'STQR:101:a8f9b23e71d49c6e';
+      final payload = QrPayloadModel.parse(staticQr);
+
+      expect(payload.sessionId, 101);
+      expect(payload.slotId, 101);
+      expect(payload.token, staticQr);
+      expect(payload.isValid, isTrue);
+    });
+
+    test('QrPayloadModel parses Dynamic QR compact JWT format', () {
+      // {"sessionId":101,"type":"DYNAMIC_QR","iat":1700000000}
+      // base64Url for payload: eyJzZXNzaW9uSWQiOjEwMSwidHlwZSI6IkRZTkFNSUNfUVIiLCJpYXQiOjE3MDAwMDAwMDB9
+      const jwtToken =
+          'eyJhbGciOiJIUzI1NiJ9.eyJzZXNzaW9uSWQiOjEwMSwidHlwZSI6IkRZTkFNSUNfUVIiLCJpYXQiOjE3MDAwMDAwMDB9.dummySignature';
+      final payload = QrPayloadModel.parse(jwtToken);
+
+      expect(payload.sessionId, 101);
+      expect(payload.slotId, 101);
+      expect(payload.token, jwtToken);
+      expect(payload.isValid, isTrue);
+    });
+
+    test('QrPayloadModel rejects invalid/corrupted string', () {
+      const invalid = 'INVALID_GARBAGE_TOKEN';
+      final payload = QrPayloadModel.parse(invalid);
+
+      expect(payload.sessionId, isNull);
+      expect(payload.slotId, isNull);
+      expect(payload.isValid, isFalse);
     });
 
     test('RoomWifiAccessPointModel parses from JSON', () {
@@ -184,6 +225,119 @@ void main() {
 
       expect(mismatchResult.isMatched, isFalse);
       expect(mismatchResult.reason, contains('Cần kết nối trạm phát phòng học'));
+    });
+
+    test('WifiValidator validates DEMO_WIFI_SIMULATION on Android Emulator', () async {
+      final mockNet = MockNetworkInfo();
+      // Android emulator typically returns null or <unknown ssid> and 02:00:00:00:00:00
+      mockNet.mockSsid = '<unknown ssid>';
+      mockNet.mockBssid = '02:00:00:00:00:00';
+
+      final validator = WifiValidator(networkInfo: mockNet);
+
+      final allowedAps = [
+        const RoomWifiAccessPointModel(
+          id: 5,
+          ssid: 'FU-Student-AL',
+          bssid: '00:1A:2B:3C:01:02',
+          roomCode: 'AL-L201',
+        ),
+      ];
+
+      // 1. When simulation is disabled: rejects because AP doesn't match
+      final rejected = await validator.validateRoomWifi(
+        allowedAps: allowedAps,
+        expectedRoomCode: 'AL-L201',
+        isSimulationAllowed: false,
+      );
+      expect(rejected.isMatched, isFalse);
+      expect(rejected.reason, contains('chưa kết nối Wi-Fi phòng học'));
+
+      // 2. When simulation is allowed: matches simulated AP
+      final accepted = await validator.validateRoomWifi(
+        allowedAps: allowedAps,
+        expectedRoomCode: 'AL-L201',
+        isSimulationAllowed: true,
+        simulatedSsid: 'AndroidWifi',
+        simulatedBssid: '02:00:00:00:00:00',
+      );
+      expect(accepted.isMatched, isTrue);
+      expect(accepted.connectedSsid, 'AndroidWifi');
+      expect(accepted.connectedBssid, '02:00:00:00:00:00');
+      expect(accepted.reason, contains('Wi-Fi mô phỏng (Demo)'));
+      expect(accepted.reason, contains('AL-L201'));
+    });
+
+    test('AttendanceController handles DEMO_WIFI_SIMULATION and passes all 5 criteria', () async {
+      Get.reset();
+      final mockApi = MockAttendanceApiService();
+      mockApi.mockQrResult = {
+        'valid': true,
+        'sessionId': 83,
+        'slotId': 136,
+        'className': 'SE1801-PRJ301',
+        'roomId': 5,
+        'roomCode': 'AL-L201',
+        'wifiSimulationAllowed': true,
+        'simulatedSsid': 'AndroidWifi',
+        'simulatedBssid': '02:00:00:00:00:00',
+      };
+      mockApi.mockAps = [
+        const RoomWifiAccessPointModel(
+          id: 5,
+          roomId: 5,
+          ssid: 'FU-Student-AL',
+          bssid: '00:1A:2B:3C:01:02',
+          roomCode: 'AL-L201',
+        ),
+      ];
+      mockApi.mockFace = const FaceStatusModel(isRegistered: true);
+
+      // Emulator network: unreadable SSID, virtual BSSID
+      final mockNet = MockNetworkInfo();
+      mockNet.mockSsid = null;
+      mockNet.mockBssid = '02:00:00:00:00:00';
+
+      final validator = WifiValidator(networkInfo: mockNet);
+      final controller = AttendanceController(
+        apiService: mockApi,
+        wifiValidator: validator,
+      );
+
+      final now = DateTime.now();
+      final todayStr =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+      final slot = TimetableSlotModel.fromJson({
+        'id': 136,
+        'className': 'SE1801-PRJ301',
+        'courseCode': 'PRJ301',
+        'courseName': 'Java Web Application Development',
+        'roomName': 'AL-L201',
+        'roomId': 5,
+        'startTime': '00:00:00',
+        'endTime': '23:59:59',
+        'date': todayStr,
+        'hasAttendanceSession': true,
+      });
+
+      controller.selectSession(slot);
+      await controller.onQrCodeScanned('STQR:83:demo-token');
+
+      // Verify server simulation flag populated
+      expect(controller.wifiSimulationAllowed.value, isTrue);
+      expect(controller.simulatedSsid.value, 'AndroidWifi');
+      expect(controller.simulatedBssid.value, '02:00:00:00:00:00');
+
+      // Verify criteria passed with Wi-Fi simulation note
+      expect(controller.qrStatus.value, VerificationStatus.pass);
+      expect(controller.wifiStatus.value, VerificationStatus.pass);
+      expect(controller.wifiNote.value, contains('Wi-Fi mô phỏng (Demo)'));
+      expect(controller.timeStatus.value, VerificationStatus.pass);
+      expect(controller.enrollmentStatus.value, VerificationStatus.pass);
+      expect(controller.faceStatus.value, VerificationStatus.pass);
+      expect(controller.passedCriteriaCount, 5);
+      expect(controller.isAllPassed, isTrue);
     });
 
     test('AttendanceController evaluates all 5 criteria and generates receipt',
@@ -408,6 +562,32 @@ void main() {
       expect(find.text('5. Dữ liệu khuôn mặt Face-ID'), findsOneWidget);
 
       expect(find.text('Tiếp tục quét khuôn mặt'), findsOneWidget);
+    });
+
+    testWidgets('AttendanceEligibilityView displays "Wi-Fi mô phỏng (Demo) – Đạt" pill when Wi-Fi simulation active',
+        (tester) async {
+      attendanceController.wifiSimulationAllowed.value = true;
+      attendanceController.wifiNote.value =
+          'Wi-Fi mô phỏng (Demo) – Đạt (Phòng AL-L201)';
+
+      await tester.pumpWidget(
+        GetMaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const AttendanceEligibilityView(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Wi-Fi mô phỏng (Demo) – Đạt'), findsOneWidget);
+      expect(
+        find.text(
+            'Chế độ Wi-Fi mô phỏng (Demo) trên Android Emulator được máy chủ cấp phép.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Wi-Fi mô phỏng (Demo) – Đạt (Phòng AL-L201)'),
+        findsOneWidget,
+      );
     });
   });
 

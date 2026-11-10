@@ -1,5 +1,6 @@
 package com.unicheck.model.dto.ai;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
@@ -29,7 +30,9 @@ public class AiVerifyFaceResponse {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class AiVerifyData {
         private Boolean matched;
+        @JsonAlias({"similarity_score", "similarity"})
         private Double similarity;
+        @JsonAlias({"euclidean_distance", "distance"})
         private Double distance;
         private Double threshold;
         private String metric;

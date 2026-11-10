@@ -33,12 +33,29 @@ class WifiValidator {
     if (cleaned.startsWith("'") && cleaned.endsWith("'") && cleaned.length >= 2) {
       cleaned = cleaned.substring(1, cleaned.length - 1);
     }
-    return cleaned.trim();
+    cleaned = cleaned.trim();
+    if (cleaned.toLowerCase() == '<unknown ssid>') {
+      return '';
+    }
+    return cleaned;
   }
 
   static String cleanBssid(String? raw) {
     if (raw == null) return '';
     return raw.trim().toLowerCase();
+  }
+
+  static String maskBssid(String? bssid) {
+    if (bssid == null || bssid.isEmpty) return '<none>';
+    final clean = bssid.trim();
+    final parts = clean.split(':');
+    if (parts.length == 6) {
+      return '${parts[0]}:${parts[1]}:**:**:**:${parts[5]}';
+    }
+    if (clean.length > 4) {
+      return '${clean.substring(0, 2)}***${clean.substring(clean.length - 2)}';
+    }
+    return '***';
   }
 
   Future<String?> getCurrentWifiSsid() async {
@@ -47,7 +64,7 @@ class WifiValidator {
       return cleanSsid(name);
     } catch (e) {
       if (kDebugMode) {
-        print('WifiValidator getWifiName error: $e');
+        print('[WifiValidator] getWifiName error: $e');
       }
       return null;
     }
@@ -59,7 +76,7 @@ class WifiValidator {
       return cleanBssid(bssid);
     } catch (e) {
       if (kDebugMode) {
-        print('WifiValidator getWifiBSSID error: $e');
+        print('[WifiValidator] getWifiBSSID error: $e');
       }
       return null;
     }
@@ -68,16 +85,65 @@ class WifiValidator {
   Future<WifiValidationResult> validateRoomWifi({
     required List<RoomWifiAccessPointModel> allowedAps,
     String? expectedRoomCode,
+    bool isSimulationAllowed = false,
+    String? simulatedSsid,
+    String? simulatedBssid,
   }) async {
-    final currentSsid = await getCurrentWifiSsid();
+    final currentSsid = await getCurrentWifiSsid() ?? '';
     final currentBssid = await getCurrentWifiBssid();
 
-    if (currentSsid == null || currentSsid.isEmpty) {
+    if (kDebugMode) {
+      print(
+        '[WifiValidator] Đối soát Wi-Fi: '
+        'SSID="${currentSsid.isEmpty ? '<không đọc được/unknown>' : currentSsid}", '
+        'BSSID="${maskBssid(currentBssid)}", '
+        'Phòng="${expectedRoomCode ?? 'N/A'}", '
+        'Số AP phòng=${allowedAps.length}, '
+        'SimulationAllowed=$isSimulationAllowed',
+      );
+    }
+
+    // 1. Chế độ DEMO_WIFI_SIMULATION (Chỉ kích hoạt khi Backend xác nhận phiên hợp lệ)
+    if (isSimulationAllowed) {
+      final isEmulatorNetwork = currentSsid.isEmpty ||
+          currentSsid.toLowerCase().contains('androidwifi') ||
+          currentSsid.toLowerCase().contains('demo') ||
+          currentSsid.toLowerCase().contains('simulation') ||
+          currentBssid == '02:00:00:00:00:00' ||
+          currentBssid == null ||
+          currentBssid.isEmpty;
+
+      if (isEmulatorNetwork) {
+        final simSsid = (simulatedSsid != null && simulatedSsid.isNotEmpty)
+            ? simulatedSsid
+            : 'AndroidWifi';
+        final simBssid = (simulatedBssid != null && simulatedBssid.isNotEmpty)
+            ? simulatedBssid
+            : '02:00:00:00:00:00';
+        final roomLabel = (expectedRoomCode != null && expectedRoomCode.isNotEmpty)
+            ? expectedRoomCode
+            : 'AL-L201';
+
+        if (kDebugMode) {
+          print('[WifiValidator] Kích hoạt DEMO_WIFI_SIMULATION: SSID="$simSsid", BSSID="${maskBssid(simBssid)}", Phòng=$roomLabel');
+        }
+
+        return WifiValidationResult(
+          isMatched: true,
+          connectedSsid: simSsid,
+          connectedBssid: simBssid,
+          reason: 'Wi-Fi mô phỏng (Demo) – Đạt (Phòng $roomLabel)',
+        );
+      }
+    }
+
+    // 2. Chế độ đối soát Wi-Fi vật lý thật (Production & Real Devices)
+    if (currentSsid.isEmpty) {
       return WifiValidationResult(
         isMatched: false,
         connectedSsid: null,
         connectedBssid: currentBssid,
-        reason: 'Thiết bị chưa kết nối Wi-Fi phòng học. Vui lòng bật Wi-Fi.',
+        reason: 'Thiết bị chưa kết nối Wi-Fi phòng học. Vui lòng bật Wi-Fi và cấp quyền vị trí.',
       );
     }
 

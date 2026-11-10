@@ -11,7 +11,7 @@ import java.util.List;
 
 /**
  * DTO yêu cầu điểm danh sinh viên gửi từ Flutter Mobile.
- * Hỗ trợ xác thực sinh trắc học khuôn mặt và đối soát đa lớp (QR, Wi-Fi, Liveness).
+ * Hỗ trợ xác thực sinh trắc học khuôn mặt và đối soát đa lớp (QR, OTP, Wi-Fi, Liveness).
  */
 @Data
 @Builder
@@ -25,6 +25,11 @@ public class AttendanceCheckInRequest {
     private Long sessionId;
 
     /**
+     * ID yêu cầu điểm danh lại (nếu đây là lượt tái xác thực)
+     */
+    private Long recheckRequestId;
+
+    /**
      * ID lịch học / ca học trên thời khóa biểu (tùy chọn nếu sessionId được cung cấp)
      */
     private Long slotId;
@@ -33,6 +38,21 @@ public class AttendanceCheckInRequest {
      * Chuỗi token mã QR quét được tại phòng học
      */
     private String qrToken;
+
+    /**
+     * Mã OTP 6 chữ số điểm danh (nếu sinh viên chọn nhập OTP)
+     */
+    private String otpCode;
+
+    /**
+     * Phiếu xác thực điểm danh (Verification Ticket) được cấp khi quét QR/nhập OTP hợp lệ ban đầu
+     */
+    private String verificationTicket;
+
+    /**
+     * Phương thức xác thực: "FACE_QR" hoặc "FACE_OTP"
+     */
+    private String verificationMethod;
 
     /**
      * Địa chỉ MAC / BSSID của Access Point Wi-Fi thiết bị đang kết nối

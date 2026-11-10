@@ -45,6 +45,10 @@ public class AttendanceSession {
     @Builder.Default
     private AttendanceSessionStatus status = AttendanceSessionStatus.CREATED;
 
+    @Column(name = "qr_rotation_interval_seconds")
+    @Builder.Default
+    private Integer qrRotationIntervalSeconds = 10;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -56,6 +60,9 @@ public class AttendanceSession {
         }
         if (status == null) {
             status = AttendanceSessionStatus.CREATED;
+        }
+        if (qrRotationIntervalSeconds == null) {
+            qrRotationIntervalSeconds = 10;
         }
     }
 }

@@ -48,8 +48,14 @@ public enum ErrorCode {
     QR_TOKEN_INVALID("ERR_3020", "Mã QR điểm danh không hợp lệ hoặc đã bị chỉnh sửa", HttpStatus.BAD_REQUEST),
     QR_TOKEN_EXPIRED("ERR_3021", "Mã QR điểm danh đã hết hạn sử dụng", HttpStatus.BAD_REQUEST),
     QR_SESSION_MISMATCH("ERR_3022", "Mã QR không khớp với phiên điểm danh yêu cầu", HttpStatus.BAD_REQUEST),
-    QR_SERVICE_UNAVAILABLE("ERR_3023", "Dịch vụ phát mã QR tạm thời không khả dụng", HttpStatus.SERVICE_UNAVAILABLE),
+    FACE_IMAGE_INVALID("ERR_3023", "Ảnh khuôn mặt không hợp lệ hoặc lỗi định dạng", HttpStatus.BAD_REQUEST),
     SESSION_NOT_OPEN("ERR_3024", "Phiên điểm danh chưa mở hoặc đã kết thúc", HttpStatus.BAD_REQUEST),
+    STATIC_QR_NOT_ALLOWED("ERR_3025", "Chế độ mã QR Test cố định không được phép trên môi trường này", HttpStatus.FORBIDDEN),
+    RECHECK_REQUEST_NOT_FOUND("ERR_3026", "Không tìm thấy yêu cầu điểm danh lại", HttpStatus.NOT_FOUND),
+    RECHECK_REQUEST_EXPIRED("ERR_3027", "Yêu cầu điểm danh lại đã hết hạn", HttpStatus.BAD_REQUEST),
+    RECHECK_REQUEST_ALREADY_COMPLETED("ERR_3028", "Yêu cầu điểm danh lại đã được hoàn thành hoặc bị hủy", HttpStatus.BAD_REQUEST),
+    DUPLICATE_PENDING_RECHECK("ERR_3029", "Sinh viên đã có yêu cầu điểm danh lại đang chờ thực hiện cho ca học này", HttpStatus.CONFLICT),
+    QR_SERVICE_UNAVAILABLE("ERR_3030", "Dịch vụ phát mã QR tạm thời không khả dụng", HttpStatus.SERVICE_UNAVAILABLE),
 
     // Academic & Management Errors (4000 - 4099)
     DUPLICATE_RESOURCE("ERR_4001", "Dữ liệu đã tồn tại trong hệ thống", HttpStatus.CONFLICT),

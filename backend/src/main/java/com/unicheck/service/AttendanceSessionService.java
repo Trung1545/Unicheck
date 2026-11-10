@@ -34,6 +34,22 @@ public interface AttendanceSessionService {
     AttendanceSessionResponse openSession(
             UserPrincipal principal,
             Long id,
+            AttendanceSessionOpenRequest openRequest,
+            HttpServletRequest httpRequest
+    );
+
+    default AttendanceSessionResponse openSession(
+            UserPrincipal principal,
+            Long id,
+            HttpServletRequest httpRequest
+    ) {
+        return openSession(principal, id, null, httpRequest);
+    }
+
+    AttendanceSessionResponse updateQrInterval(
+            UserPrincipal principal,
+            Long id,
+            AttendanceSessionOpenRequest request,
             HttpServletRequest httpRequest
     );
 
@@ -66,4 +82,46 @@ public interface AttendanceSessionService {
             AttendanceCheckInRequest request,
             HttpServletRequest httpRequest
     );
+
+    /**
+     * Lấy toàn bộ danh sách sinh viên ghi danh trong lớp của phiên điểm danh kèm trạng thái điểm danh và recheck
+     */
+    List<SessionStudentAttendanceDto> getSessionStudents(UserPrincipal principal, Long sessionId);
+
+    /**
+     * Giảng viên điều chỉnh thủ công trạng thái điểm danh của sinh viên (PRESENT, LATE, ABSENT) kèm lý do
+     */
+    StudentAttendanceResponse adjustStudentAttendance(
+            UserPrincipal principal,
+            Long sessionId,
+            Long studentId,
+            AttendanceManualAdjustRequest request,
+            HttpServletRequest httpRequest
+    );
+
+    /**
+     * Giảng viên gửi yêu cầu một sinh viên thực hiện điểm danh lại (RECHECK)
+     */
+    AttendanceRecheckResponse createRecheckRequest(
+            UserPrincipal principal,
+            Long sessionId,
+            Long studentId,
+            AttendanceRecheckCreateRequest request,
+            HttpServletRequest httpRequest
+    );
+
+    /**
+     * Lấy toàn bộ lịch sử điều chỉnh điểm danh và tái xác thực của phiên
+     */
+    List<AttendanceHistoryRecordDto> getSessionAdjustmentHistory(UserPrincipal principal, Long sessionId);
+
+    /**
+     * Sinh viên lấy danh sách các yêu cầu điểm danh lại đang chờ thực hiện (PENDING)
+     */
+    List<AttendanceRecheckResponse> getPendingRecheckRequestsForStudent(UserPrincipal principal);
+
+    /**
+     * Lấy chi tiết một yêu cầu điểm danh lại
+     */
+    AttendanceRecheckResponse getRecheckRequestDetails(UserPrincipal principal, Long requestId);
 }

@@ -270,6 +270,9 @@ class LivenessEngine:
         if not self.is_ready:
             raise LivenessModelNotReadyError()
 
+        if face_info and "image" in face_info and face_info["image"] is not None:
+            image = face_info["image"]
+
         if image is None or image.size == 0:
             raise LivenessEngineError("Dữ liệu ảnh rỗng hoặc không hợp lệ")
 
@@ -352,6 +355,20 @@ class LivenessEngine:
                     attack_type = "PRINT_PAPER_OR_CUTOUT"
                 else:
                     attack_type = "SCREEN_OR_VIDEO_REPLAY"
+
+            logger.info(
+                "[LivenessDecision] is_live=%s, score=%.4f, threshold=%.2f, model=%s(%s), mode=%s, attack=%s, probs={real: %.4f, print: %.4f, screen: %.4f}",
+                is_live,
+                round(prob_real, 4),
+                float(decision_thresh),
+                self.model_name,
+                self.model_version,
+                self.mode,
+                attack_type,
+                round(prob_real, 4),
+                round(prob_print, 4),
+                round(prob_replay, 4),
+            )
 
             return {
                 "is_live": is_live,
